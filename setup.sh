@@ -19,7 +19,8 @@ step()  { echo -e "\n${CYAN}── $* ──${NC}"; }
 
 # ── Config ───────────────────────────────────────────────────
 ANTIGRAVITY_MCP="$HOME/.gemini/antigravity/mcp_config.json"
-GITNEXUS_DIR="$HOME/AI-Tool/GitNexus"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GITNEXUS_DIR="$SCRIPT_DIR/GitNexus"
 GITNEXUS_WEB_DIR="$GITNEXUS_DIR/gitnexus-web"
 
 # ── Prereqs ──────────────────────────────────────────────────
@@ -114,8 +115,7 @@ warm_cache() {
 install_sync_script() {
   step "Installing gitnexus-sync"
 
-  local script_dir
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local script_dir="$SCRIPT_DIR"
   local src="$script_dir/sync-skills.sh"
   local dest_dir="$HOME/.local/bin"
   local dest="$dest_dir/gitnexus-sync"
@@ -150,11 +150,11 @@ fork_web_ui() {
     return
   fi
 
-  mkdir -p "$(dirname "$GITNEXUS_DIR")"
+  mkdir -p "$GITNEXUS_DIR"
 
   if command -v gh &>/dev/null; then
     info "Forking abhigyanpatwari/GitNexus via GitHub CLI..."
-    if (cd "$(dirname "$GITNEXUS_DIR")" && gh repo fork abhigyanpatwari/GitNexus --clone=true 2>&1); then
+    if (cd "$SCRIPT_DIR" && gh repo fork abhigyanpatwari/GitNexus --clone=true 2>&1); then
       ok "Forked and cloned → $GITNEXUS_DIR"
     else
       warn "Fork failed — falling back to clone"

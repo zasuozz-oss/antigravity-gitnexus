@@ -1,37 +1,38 @@
 # GitNexus + Antigravity Setup
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+**🌐 [Tiếng Việt](README.vi.md)**
 
-> One-command setup [GitNexus](https://github.com/abhigyanpatwari/GitNexus) MCP server cho [Antigravity](https://github.com/AntimatterAI/antimatter).
+> One-command setup for [GitNexus](https://github.com/abhigyanpatwari/GitNexus) MCP server with [Antigravity](https://github.com/AntimatterAI/antimatter).
 
 ---
 
-## GitNexus là gì?
+## What is GitNexus?
 
-[GitNexus](https://github.com/abhigyanpatwari/GitNexus) — tác giả [Abhigyan Patwari](https://github.com/abhigyanpatwari) — là một **code intelligence engine** xây dựng knowledge graph từ codebase của bạn.
+[GitNexus](https://github.com/abhigyanpatwari/GitNexus) — by [Abhigyan Patwari](https://github.com/abhigyanpatwari) — is a **code intelligence engine** that builds a knowledge graph from your codebase.
 
-Nó phân tích AST (Tree-sitter), trích xuất mọi function, class, dependency, call chain, rồi expose qua [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) để AI agent có thể:
+It parses ASTs (Tree-sitter), extracts every function, class, dependency, and call chain, then exposes it via [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) so AI agents can:
 
-- **Hiểu cấu trúc thực sự** của codebase thay vì chỉ grep text
-- **Phân tích blast radius** trước khi sửa code — biết chính xác cái gì sẽ vỡ
-- **Trace execution flows** — theo dõi dòng chảy từ entry point đến terminal
-- **Rename an toàn** qua knowledge graph, không phải find-and-replace mù
+- **Understand the real structure** of a codebase instead of just grepping text
+- **Analyze blast radius** before editing — know exactly what will break
+- **Trace execution flows** — follow the path from entry point to terminal
+- **Rename safely** via the knowledge graph, not blind find-and-replace
 
-Hỗ trợ 13 ngôn ngữ: TypeScript, JavaScript, Python, Java, Kotlin, C#, Go, Rust, PHP, Ruby, Swift, C, C++.
+Supports 13 languages: TypeScript, JavaScript, Python, Java, Kotlin, C#, Go, Rust, PHP, Ruby, Swift, C, C++.
 
-> GitNexus sử dụng [PolyForm Noncommercial License](https://github.com/abhigyanpatwari/GitNexus/blob/main/LICENSE). Repo setup script này (chỉ chứa script, không chứa source GitNexus) sử dụng [MIT License](LICENSE).
+> GitNexus is licensed under [PolyForm Noncommercial License](https://github.com/abhigyanpatwari/GitNexus/blob/main/LICENSE). This setup script repo (contains only the script, not GitNexus source) uses [MIT License](LICENSE).
 
 ---
 
 ## Quick Start
 
-**Cách 1 — One-liner:**
+**Option 1 — One-liner:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zasuozz-oss/gitnexus-setup/main/setup.sh | bash
 ```
 
-**Cách 2 — Clone rồi chạy:**
+**Option 2 — Clone and run:**
 
 ```bash
 git clone https://github.com/zasuozz-oss/gitnexus-setup.git
@@ -39,100 +40,100 @@ cd gitnexus-setup
 ./setup.sh
 ```
 
-Script tự động:
+The script automatically:
 
-1. ✅ Kiểm tra Node.js ≥ 18, npm, git
-2. 📦 Clone [GitNexus](https://github.com/abhigyanpatwari/GitNexus) vào `./git-nexus`
-3. 📦 Install dependencies + build
-4. ⚙️ Cấu hình MCP vào `~/.gemini/antigravity/mcp_config.json`
+1. ✅ Checks prerequisites (Node.js ≥ 18, npm, git)
+2. 📦 Clones [GitNexus](https://github.com/abhigyanpatwari/GitNexus) into `./git-nexus`
+3. 📦 Installs dependencies + builds
+4. ⚙️ Configures MCP in `~/.gemini/antigravity/mcp_config.json`
 
-Sau khi xong → **restart Antigravity** để load MCP server mới.
+After completion → **restart Antigravity** to load the new MCP server.
 
 ---
 
-## Sử dụng
+## Usage
 
-### 1. Index codebase
+### 1. Index your codebase
 
-Sau khi setup, chạy lệnh sau **trong thư mục project** bạn muốn phân tích:
+After setup, run this **inside the project directory** you want to analyze:
 
 ```bash
 npx gitnexus analyze
 ```
 
-GitNexus sẽ tạo knowledge graph trong `.gitnexus/` (đã gitignore). Quá trình này chạy 1 lần, sau có thể re-analyze khi code thay đổi.
+GitNexus creates a knowledge graph in `.gitnexus/` (gitignored). Run once, then re-analyze when code changes.
 
-### 2. Sử dụng trong Antigravity
+### 2. Use in Antigravity
 
-Khi đã index xong, Antigravity tự động có thể sử dụng các MCP tools khi bạn làm việc với codebase đó:
+Once indexed, Antigravity automatically has access to MCP tools for that codebase:
 
 ```
-# Tìm execution flows liên quan đến authentication
+# Find execution flows related to authentication
 gitnexus_query({query: "authentication middleware"})
 
-# Xem 360° một function — ai gọi nó, nó gọi ai, thuộc flow nào
+# 360° view of a function — who calls it, what it calls, which flows it's in
 gitnexus_context({name: "validateUser"})
 
-# Kiểm tra blast radius trước khi sửa
+# Check blast radius before editing
 gitnexus_impact({target: "UserService", direction: "upstream"})
 
-# Xem thay đổi ảnh hưởng gì trước khi commit
+# See what your changes affect before committing
 gitnexus_detect_changes({scope: "staged"})
 
-# Rename an toàn qua knowledge graph
+# Safe rename via knowledge graph
 gitnexus_rename({symbol_name: "oldName", new_name: "newName", dry_run: true})
 ```
 
-### 3. Web UI (tùy chọn)
+### 3. Web UI (optional)
 
 ```bash
 cd git-nexus/gitnexus-web
 npm run dev
 ```
 
-Mở browser xem visual graph explorer + AI chat. Hoặc dùng online tại [gitnexus.vercel.app](https://gitnexus.vercel.app).
+Opens a visual graph explorer + AI chat in browser. Or use online at [gitnexus.vercel.app](https://gitnexus.vercel.app).
 
 ---
 
 ## MCP Tools Reference
 
-| Tool | Mô tả | Khi nào dùng |
-|------|--------|-------------|
-| `query` | Tìm execution flows theo concept (hybrid: BM25 + semantic) | Muốn hiểu code liên quan đến 1 chủ đề |
-| `context` | 360° symbol view — callers, callees, processes | Cần biết mọi thứ về 1 function/class |
-| `impact` | Blast radius — d=1 sẽ vỡ, d=2 có thể ảnh hưởng, d=3 cần test | **Trước khi sửa** bất kỳ symbol nào |
-| `detect_changes` | Map git diff → affected processes + risk level | **Trước khi commit** |
-| `rename` | Multi-file rename qua knowledge graph + text search | Khi cần rename symbol an toàn |
-| `cypher` | Custom Cypher queries trên code graph | Query phức tạp, tùy biến |
-| `list_repos` | Liệt kê tất cả repos đã index | Khi làm việc multi-repo |
+| Tool | Description | When to use |
+|------|-------------|-------------|
+| `query` | Find execution flows by concept (hybrid: BM25 + semantic) | Understand code related to a topic |
+| `context` | 360° symbol view — callers, callees, processes | Need full picture of a function/class |
+| `impact` | Blast radius — d=1 will break, d=2 likely affected, d=3 needs testing | **Before editing** any symbol |
+| `detect_changes` | Map git diff → affected processes + risk level | **Before committing** |
+| `rename` | Multi-file rename via knowledge graph + text search | Safe symbol renaming |
+| `cypher` | Custom Cypher queries on code graph | Complex/custom queries |
+| `list_repos` | List all indexed repositories | Multi-repo workflows |
 
 ---
 
 ## Update
 
-Khi GitNexus có version mới:
+When GitNexus releases a new version:
 
 ```bash
 ./setup.sh update
 ```
 
-Script sẽ `git pull` → clean rebuild → cập nhật MCP path.
+Pulls latest → clean rebuild → updates MCP path.
 
 ---
 
-## Cấu hình
+## Configuration
 
-### Chọn thư mục cài đặt
+### Custom install directory
 
 ```bash
 GITNEXUS_DIR=/path/to/dir ./setup.sh
 ```
 
-Mặc định clone vào `./git-nexus` (thư mục đang đứng).
+Default: clones into `./git-nexus` (current working directory).
 
 ### MCP Config
 
-Script tự ghi vào `~/.gemini/antigravity/mcp_config.json`:
+The script writes to `~/.gemini/antigravity/mcp_config.json`:
 
 ```json
 {
@@ -145,18 +146,18 @@ Script tự ghi vào `~/.gemini/antigravity/mcp_config.json`:
 }
 ```
 
-Đường dẫn tự tính dựa trên vị trí thực tế — **không fix cứng**, hoạt động đúng trên mọi thiết bị.
+The path is computed dynamically based on the actual repo location — **never hardcoded**, works correctly on any machine.
 
 ---
 
-## Yêu cầu hệ thống
+## System Requirements
 
-| | Bắt buộc | Tùy chọn |
+| | Required | Optional |
 |---|---------|----------|
 | **Node.js** | ≥ 18 | |
-| **npm** | ✓ (đi kèm Node.js) | |
+| **npm** | ✓ (bundled with Node.js) | |
 | **git** | ✓ | |
-| **python3** | | Cho auto-config MCP |
+| **python3** | | For auto-config MCP |
 | **OS** | macOS, Linux | |
 
 ---
@@ -169,5 +170,5 @@ Script tự ghi vào `~/.gemini/antigravity/mcp_config.json`:
 
 ## License
 
-Script setup: [MIT License](LICENSE).  
+Setup script: [MIT License](LICENSE).  
 GitNexus: [PolyForm Noncommercial License](https://github.com/abhigyanpatwari/GitNexus/blob/main/LICENSE).

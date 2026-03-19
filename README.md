@@ -33,11 +33,12 @@ cd gitnexus-setup
 ./setup.sh
 ```
 
-The script does three things:
+The script does four things:
 
 1. **Configures** Antigravity MCP (`~/.gemini/antigravity/mcp_config.json`)
 2. **Installs** `gitnexus-sync` to `~/.local/bin/` — syncs GitNexus skills to Antigravity format
-3. **Pre-downloads** `gitnexus` via npx cache
+3. **Clones** the GitNexus repo (via `gh fork` or `git clone`) and installs Web UI dependencies
+4. **Pre-downloads** `gitnexus` via npx cache
 
 After completion → **restart Antigravity** to load the MCP server.
 
@@ -64,9 +65,21 @@ GitNexus writes skills to `.claude/skills/` (Claude Code format). Run `gitnexus-
 gitnexus-sync
 ```
 
-This copies skills to `.agents/skills/gitnexus-*/SKILL.md` with proper YAML frontmatter.
+This copies skills to `.agents/skills/gitnexus-*/SKILL.md` with proper YAML frontmatter. Supports both flat files (`.claude/skills/*.md`) and generated skills (`.claude/skills/generated/*/SKILL.md`).
 
-### 3. Use in Antigravity
+### 3. Launch the Web UI
+
+Visualize the knowledge graph in your browser:
+
+```bash
+./web-ui.sh
+```
+
+This starts both the **backend** (`http://127.0.0.1:4747`) and **frontend** (`http://localhost:5173`) in one command. Press `Ctrl+C` to stop both.
+
+> **Note:** Requires `./setup.sh` to have been run first (clones GitNexus repo and installs dependencies).
+
+### 4. Use in Antigravity
 
 Once indexed, Antigravity automatically has access to these MCP tools when working with that codebase:
 
@@ -103,6 +116,21 @@ gitnexus_rename({symbol_name: "oldName", new_name: "newName", dry_run: true})
 
 ---
 
+## Project Structure
+
+```
+gitnexus-setup/
+├── setup.sh          # Main setup — MCP config, sync install, Web UI clone, npx cache
+├── sync-skills.sh    # Bridge .claude/skills/ → .agents/skills/ (Antigravity format)
+├── web-ui.sh         # Launch backend + frontend in one command
+├── test-sync.sh      # Test suite for sync-skills.sh (6 tests)
+├── GitNexus/         # Cloned GitNexus repo (gitignored, created by setup.sh)
+├── LICENSE           # MIT
+└── README.md
+```
+
+---
+
 ## Update
 
 ```bash
@@ -110,6 +138,18 @@ gitnexus_rename({symbol_name: "oldName", new_name: "newName", dry_run: true})
 ```
 
 Updates gitnexus to the latest version and re-validates MCP config.
+
+---
+
+## Testing
+
+Run the sync-skills test suite:
+
+```bash
+bash test-sync.sh
+```
+
+Covers: flat skills, generated skills, frontmatter rewriting, idempotency, graceful error handling, and mixed skill layouts.
 
 ---
 
@@ -136,6 +176,7 @@ Uses `npx gitnexus@latest` — always uses the latest version, no hardcoded path
 
 - **Node.js** ≥ 18 (with npm)
 - **python3** (optional, for auto-config MCP)
+- **gh** CLI (optional, for forking instead of cloning)
 - **macOS** or **Linux**
 
 ---

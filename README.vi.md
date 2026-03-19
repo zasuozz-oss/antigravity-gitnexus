@@ -33,11 +33,12 @@ cd gitnexus-setup
 ./setup.sh
 ```
 
-Script làm 3 việc:
+Script làm 4 việc:
 
 1. **Cấu hình** Antigravity MCP (`~/.gemini/antigravity/mcp_config.json`)
 2. **Cài đặt** `gitnexus-sync` vào `~/.local/bin/` — đồng bộ skill GitNexus sang định dạng Antigravity
-3. **Pre-download** `gitnexus` qua npx cache
+3. **Clone** repo GitNexus (qua `gh fork` hoặc `git clone`) và cài Web UI dependencies
+4. **Pre-download** `gitnexus` qua npx cache
 
 Sau khi xong → **restart Antigravity** để load MCP server mới.
 
@@ -64,9 +65,21 @@ GitNexus ghi skill vào `.claude/skills/` (định dạng Claude Code). Chạy `
 gitnexus-sync
 ```
 
-Skill sẽ được copy sang `.agents/skills/gitnexus-*/SKILL.md` kèm YAML frontmatter chuẩn.
+Skill sẽ được copy sang `.agents/skills/gitnexus-*/SKILL.md` kèm YAML frontmatter chuẩn. Hỗ trợ cả file phẳng (`.claude/skills/*.md`) và skill sinh tự động (`.claude/skills/generated/*/SKILL.md`).
 
-### 3. Sử dụng trong Antigravity
+### 3. Khởi chạy Web UI
+
+Trực quan hóa knowledge graph trên trình duyệt:
+
+```bash
+./web-ui.sh
+```
+
+Khởi động cả **backend** (`http://127.0.0.1:4747`) lẫn **frontend** (`http://localhost:5173`) trong một lệnh. Nhấn `Ctrl+C` để dừng cả hai.
+
+> **Lưu ý:** Cần chạy `./setup.sh` trước (clone repo GitNexus và cài dependencies).
+
+### 4. Sử dụng trong Antigravity
 
 Khi đã index, Antigravity tự động có thể dùng các MCP tools:
 
@@ -103,13 +116,40 @@ gitnexus_rename({symbol_name: "oldName", new_name: "newName", dry_run: true})
 
 ---
 
-## Update
+## Cấu trúc dự án
+
+```
+gitnexus-setup/
+├── setup.sh          # Setup chính — MCP config, cài sync, clone Web UI, npx cache
+├── sync-skills.sh    # Chuyển .claude/skills/ → .agents/skills/ (định dạng Antigravity)
+├── web-ui.sh         # Khởi chạy backend + frontend bằng 1 lệnh
+├── test-sync.sh      # Bộ test cho sync-skills.sh (6 test cases)
+├── GitNexus/         # Repo GitNexus đã clone (gitignored, tạo bởi setup.sh)
+├── LICENSE           # MIT
+└── README.md
+```
+
+---
+
+## Cập nhật
 
 ```bash
 ./setup.sh update
 ```
 
 Cập nhật gitnexus lên version mới nhất và kiểm tra lại MCP config.
+
+---
+
+## Chạy test
+
+Chạy bộ test cho sync-skills:
+
+```bash
+bash test-sync.sh
+```
+
+Bao gồm: flat skills, generated skills, ghi đè frontmatter, idempotency, xử lý lỗi, và bố cục skill hỗn hợp.
 
 ---
 
@@ -136,6 +176,7 @@ Dùng `npx gitnexus@latest` — luôn dùng version mới nhất, không hardcod
 
 - **Node.js** ≥ 18 (kèm npm)
 - **python3** (tùy chọn, cho auto-config MCP)
+- **gh** CLI (tùy chọn, để fork thay vì clone)
 - **macOS** hoặc **Linux**
 
 ---

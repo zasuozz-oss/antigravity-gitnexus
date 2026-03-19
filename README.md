@@ -1,6 +1,8 @@
 # GitNexus + Antigravity Setup
 
-> Auto-setup [GitNexus](https://github.com/abhigyanpatwari/GitNexus) với [Antigravity](https://github.com/AntimatterAI/antimatter) — zero manual steps.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+> Auto-setup [GitNexus](https://github.com/abhigyanpatwari/GitNexus) MCP server cho [Antigravity](https://github.com/AntimatterAI/antimatter) — zero manual steps.
 
 ## Quick Start
 

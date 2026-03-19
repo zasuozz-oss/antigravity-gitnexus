@@ -50,10 +50,10 @@ Go to any project directory and index it:
 
 ```bash
 cd your-project
-gitnexus analyze
+npx gitnexus analyze
 ```
 
-This creates a knowledge graph in `.gitnexus/` (gitignored). Run once per repo, re-analyze when code changes.
+This creates a knowledge graph in `.gitnexus/` (gitignored). Run once per repo, re-run when code changes.
 
 ### 2. Use in Antigravity
 

@@ -4,8 +4,6 @@
 #
 # Install:  curl -fsSL <raw-url> | bash
 #           — or —  ./setup.sh
-#
-# Update:   ./setup.sh update
 # ══════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -36,29 +34,10 @@ check_prereqs() {
   fi
   ok "Node $(node -v)"
 
-  if ! command -v npm &>/dev/null; then
-    err "npm not found"; exit 1
+  if ! command -v npx &>/dev/null; then
+    err "npx not found (should come with Node.js)"; exit 1
   fi
-  ok "npm $(npm -v)"
-}
-
-# ── Install gitnexus globally ────────────────────────────────
-install_gitnexus() {
-  step "Installing gitnexus"
-
-  # Check if already installed
-  if command -v gitnexus &>/dev/null; then
-    local current_ver
-    current_ver=$(gitnexus --version 2>/dev/null || echo "unknown")
-    ok "gitnexus v$current_ver already installed"
-    return
-  fi
-
-  info "Installing gitnexus globally..."
-  npm install -g gitnexus
-  local ver
-  ver=$(gitnexus --version 2>/dev/null || echo "unknown")
-  ok "gitnexus v$ver installed"
+  ok "npx available"
 }
 
 # ── Configure Antigravity MCP ────────────────────────────────
@@ -110,80 +89,43 @@ print(action)
 ")
 
   case "$action" in
-    added)     ok "MCP entry added (npx gitnexus@latest mcp)" ;;
-    updated)   ok "MCP entry updated (npx gitnexus@latest mcp)" ;;
-    unchanged) ok "MCP already configured correctly" ;;
+    added)     ok "MCP entry added" ;;
+    updated)   ok "MCP entry updated" ;;
+    unchanged) ok "MCP already configured" ;;
   esac
+
+  info "MCP command: npx -y gitnexus@latest mcp"
 }
 
-# ── Update ───────────────────────────────────────────────────
-do_update() {
-  echo -e "\n${CYAN}🔄 GitNexus Update${NC}"
-
-  check_prereqs
-
-  step "Updating gitnexus"
-  local old_ver
-  old_ver=$(gitnexus --version 2>/dev/null || echo "not installed")
-
-  npm install -g gitnexus@latest
-
-  local new_ver
-  new_ver=$(gitnexus --version 2>/dev/null || echo "unknown")
-
-  if [ "$old_ver" = "$new_ver" ]; then
-    ok "Already on latest (v$new_ver)"
+# ── Warm cache (optional, non-blocking) ──────────────────────
+warm_cache() {
+  step "Pre-downloading gitnexus"
+  info "Running npx to cache gitnexus (this may take a moment)..."
+  if npx -y gitnexus@latest --version 2>/dev/null; then
+    ok "gitnexus v$(npx -y gitnexus@latest --version 2>/dev/null) cached"
   else
-    ok "Updated v$old_ver → v$new_ver"
+    warn "Pre-download failed — Antigravity will download on first use"
   fi
-
-  configure_mcp
-  print_done "Updated to v$new_ver"
-}
-
-# ── Fresh setup ──────────────────────────────────────────────
-do_setup() {
-  echo -e "\n${CYAN}🔧 GitNexus for Antigravity${NC}"
-
-  check_prereqs
-  install_gitnexus
-  configure_mcp
-  print_done "Setup complete (v$(gitnexus --version 2>/dev/null || echo '?'))"
-}
-
-# ── Done banner ──────────────────────────────────────────────
-print_done() {
-  local msg="${1:-Done}"
-  echo ""
-  echo -e "${GREEN}═══════════════════════════════════════════${NC}"
-  echo -e "${GREEN}  $msg${NC}"
-  echo -e "${GREEN}═══════════════════════════════════════════${NC}"
-  echo ""
-  echo -e "  ${DIM}Index a repo${NC}   cd your-project && gitnexus analyze"
-  echo -e "  ${DIM}Update${NC}         ./setup.sh update"
-  echo ""
-  echo -e "  ${YELLOW}→ Restart Antigravity to load MCP${NC}"
-  echo ""
-}
-
-# ── Usage ────────────────────────────────────────────────────
-usage() {
-  echo "Usage: ./setup.sh [command]"
-  echo ""
-  echo "Commands:"
-  echo "  (none)     Install gitnexus + configure Antigravity MCP"
-  echo "  update     Update gitnexus to latest version"
-  echo "  help       Show this help"
-  echo ""
 }
 
 # ── Main ─────────────────────────────────────────────────────
 main() {
-  case "${1:-}" in
-    update|upgrade)  do_update ;;
-    help|--help|-h)  usage ;;
-    *)               do_setup ;;
-  esac
+  echo -e "\n${CYAN}🔧 GitNexus for Antigravity${NC}"
+
+  check_prereqs
+  configure_mcp
+  warm_cache
+
+  echo ""
+  echo -e "${GREEN}═══════════════════════════════════════════${NC}"
+  echo -e "${GREEN}  Setup complete!${NC}"
+  echo -e "${GREEN}═══════════════════════════════════════════${NC}"
+  echo ""
+  echo -e "  ${DIM}Index a repo${NC}    cd your-project && npx gitnexus analyze"
+  echo -e "  ${DIM}Re-run setup${NC}   ./setup.sh"
+  echo ""
+  echo -e "  ${YELLOW}→ Restart Antigravity to load MCP${NC}"
+  echo ""
 }
 
 main "$@"

@@ -50,7 +50,7 @@ Vào thư mục project bất kỳ và index:
 
 ```bash
 cd your-project
-gitnexus analyze
+npx gitnexus analyze
 ```
 
 GitNexus tạo knowledge graph trong `.gitnexus/` (đã gitignore). Chạy 1 lần, re-analyze khi code thay đổi.

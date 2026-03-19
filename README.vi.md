@@ -33,10 +33,11 @@ cd gitnexus-setup
 ./setup.sh
 ```
 
-Script chỉ làm 2 việc:
+Script làm 3 việc:
 
-1. **Cài đặt** `gitnexus` qua npm (global)
-2. **Cấu hình** Antigravity MCP (`~/.gemini/antigravity/mcp_config.json`)
+1. **Cấu hình** Antigravity MCP (`~/.gemini/antigravity/mcp_config.json`)
+2. **Cài đặt** `gitnexus-sync` vào `~/.local/bin/` — đồng bộ skill GitNexus sang định dạng Antigravity
+3. **Pre-download** `gitnexus` qua npx cache
 
 Sau khi xong → **restart Antigravity** để load MCP server mới.
 
@@ -50,12 +51,22 @@ Vào thư mục project bất kỳ và index:
 
 ```bash
 cd your-project
-npx gitnexus analyze
+npx gitnexus analyze --skills
 ```
 
-GitNexus tạo knowledge graph trong `.gitnexus/` (đã gitignore). Chạy 1 lần, re-analyze khi code thay đổi.
+GitNexus tạo knowledge graph trong `.gitnexus/` (đã gitignore). Flag `--skills` tạo skill files cho AI agent. Chạy 1 lần, re-analyze khi code thay đổi.
 
-### 2. Sử dụng trong Antigravity
+### 2. Đồng bộ skill sang Antigravity
+
+GitNexus ghi skill vào `.claude/skills/` (định dạng Claude Code). Chạy `gitnexus-sync` để chuyển sang định dạng Antigravity:
+
+```bash
+gitnexus-sync
+```
+
+Skill sẽ được copy sang `.agents/skills/gitnexus-*/SKILL.md` kèm YAML frontmatter chuẩn.
+
+### 3. Sử dụng trong Antigravity
 
 Khi đã index, Antigravity tự động có thể dùng các MCP tools:
 

@@ -33,10 +33,11 @@ cd gitnexus-setup
 ./setup.sh
 ```
 
-The script does two things:
+The script does three things:
 
-1. **Installs** `gitnexus` globally via npm
-2. **Configures** Antigravity MCP (`~/.gemini/antigravity/mcp_config.json`)
+1. **Configures** Antigravity MCP (`~/.gemini/antigravity/mcp_config.json`)
+2. **Installs** `gitnexus-sync` to `~/.local/bin/` — syncs GitNexus skills to Antigravity format
+3. **Pre-downloads** `gitnexus` via npx cache
 
 After completion → **restart Antigravity** to load the MCP server.
 
@@ -50,12 +51,22 @@ Go to any project directory and index it:
 
 ```bash
 cd your-project
-npx gitnexus analyze
+npx gitnexus analyze --skills
 ```
 
-This creates a knowledge graph in `.gitnexus/` (gitignored). Run once per repo, re-run when code changes.
+This creates a knowledge graph in `.gitnexus/` (gitignored). The `--skills` flag generates skill files for AI agents. Run once per repo, re-run when code changes.
 
-### 2. Use in Antigravity
+### 2. Sync skills to Antigravity
+
+GitNexus writes skills to `.claude/skills/` (Claude Code format). Run `gitnexus-sync` to convert them to Antigravity format:
+
+```bash
+gitnexus-sync
+```
+
+This copies skills to `.agents/skills/gitnexus-*/SKILL.md` with proper YAML frontmatter.
+
+### 3. Use in Antigravity
 
 Once indexed, Antigravity automatically has access to these MCP tools when working with that codebase:
 

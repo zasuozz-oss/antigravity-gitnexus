@@ -108,12 +108,40 @@ warm_cache() {
   fi
 }
 
+# ── Install gitnexus-sync to PATH ────────────────────────────
+install_sync_script() {
+  step "Installing gitnexus-sync"
+
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local src="$script_dir/sync-skills.sh"
+  local dest_dir="$HOME/.local/bin"
+  local dest="$dest_dir/gitnexus-sync"
+
+  if [ ! -f "$src" ]; then
+    warn "sync-skills.sh not found — skipping sync script install"
+    return
+  fi
+
+  mkdir -p "$dest_dir"
+  cp "$src" "$dest"
+  chmod +x "$dest"
+  ok "Installed gitnexus-sync → $dest"
+
+  # Check if ~/.local/bin is in PATH
+  if ! echo "$PATH" | tr ':' '\n' | grep -qx "$dest_dir"; then
+    warn "$dest_dir is not in PATH"
+    info "Add to your shell profile:  export PATH=\"\$HOME/.local/bin:\$PATH\""
+  fi
+}
+
 # ── Main ─────────────────────────────────────────────────────
 main() {
   echo -e "\n${CYAN}🔧 GitNexus for Antigravity${NC}"
 
   check_prereqs
   configure_mcp
+  install_sync_script
   warm_cache
 
   echo ""
@@ -121,7 +149,8 @@ main() {
   echo -e "${GREEN}  Setup complete!${NC}"
   echo -e "${GREEN}═══════════════════════════════════════════${NC}"
   echo ""
-  echo -e "  ${DIM}Index a repo${NC}    cd your-project && npx gitnexus analyze"
+  echo -e "  ${DIM}Index a repo${NC}    cd your-project && npx gitnexus analyze --skills"
+  echo -e "  ${DIM}Sync skills${NC}    gitnexus-sync"
   echo -e "  ${DIM}Re-run setup${NC}   ./setup.sh"
   echo ""
   echo -e "  ${YELLOW}→ Restart Antigravity to load MCP${NC}"

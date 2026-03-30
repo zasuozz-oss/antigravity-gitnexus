@@ -97,7 +97,7 @@ print(action)
     unchanged) ok "MCP already configured" ;;
   esac
 
-  info "MCP command: npx -y gitnexus@latest mcp"
+  info "MCP command: npx -y gitnexus@latest mcp (or local gitnexus mcp if linked)"
 }
 
 # ── Warm cache (optional, non-blocking) ──────────────────────
@@ -177,6 +177,22 @@ fork_web_ui() {
   fi
 }
 
+# ── Build & Link Local CLI ───────────────────────────────────
+setup_cli_build() {
+  step "Building and Linking GitNexus CLI"
+  local cli_dir="$GITNEXUS_DIR/gitnexus"
+  if [ -d "$cli_dir" ]; then
+    info "Installing dependencies, building, and linking globally..."
+    if (cd "$cli_dir" && npm install && npm run build && npm link > /dev/null 2>&1); then
+      ok "CLI built and linked. You can now use the 'gitnexus' command everywhere."
+    else
+      warn "Failed to build or link CLI."
+    fi
+  else
+    warn "CLI directory $cli_dir not found"
+  fi
+}
+
 # ── Main ─────────────────────────────────────────────────────
 main() {
   echo -e "\n${CYAN}🔧 GitNexus for Antigravity${NC}"
@@ -185,6 +201,7 @@ main() {
   configure_mcp
   install_sync_script
   fork_web_ui
+  setup_cli_build
   warm_cache
 
   echo ""
@@ -192,7 +209,8 @@ main() {
   echo -e "${GREEN}  Setup complete!${NC}"
   echo -e "${GREEN}═══════════════════════════════════════════${NC}"
   echo ""
-  echo -e "  ${DIM}Index a repo${NC}    cd your-project && npx gitnexus analyze --skills"
+  echo -e "  ${DIM}Index Unity${NC}    cd your-project && gitnexus unity analyze --embeddings --skills"
+  echo -e "  ${DIM}Index generic${NC}  cd your-project && gitnexus analyze --skills"
   echo -e "  ${DIM}Sync skills${NC}    gitnexus-sync"
   echo -e "  ${DIM}Web UI${NC}         npx gitnexus serve & cd $GITNEXUS_WEB_DIR && npm run dev"
   echo -e "  ${DIM}Re-run setup${NC}   ./setup.sh"

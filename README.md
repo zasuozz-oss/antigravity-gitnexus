@@ -63,12 +63,21 @@ Go to any project directory and index it:
 
 ```bash
 cd your-project
-npx gitnexus analyze --skills
+gitnexus analyze --skills
 ```
 
 This creates a knowledge graph in `.gitnexus/` (gitignored). The `--skills` flag generates skill files for AI agents. Run once per repo, re-run when code changes.
 
-### 2. Sync skills to Antigravity
+### 2. Index a Unity project
+
+For Unity games (like SDU), GitNexus has a specialized Unity parser that automatically skips heavy plugins, native SDKs (Firebase, AppsFlyer), and auto-generated Unity internals (`Library/`, `Logs/`). It also includes memory management improvements and graph noise reducers (e.g., pruning `MonoBehaviour` inheritance) to keep the AI Knowledge Graph clean, small, and fast.
+
+```bash
+cd your-unity-project
+gitnexus unity analyze --embeddings --skills
+```
+
+### 3. Sync skills to Antigravity
 
 GitNexus writes skills to `.claude/skills/` (Claude Code format). Run `gitnexus-sync` to convert them to Antigravity format:
 
@@ -78,7 +87,7 @@ gitnexus-sync
 
 This copies skills to `.agents/skills/gitnexus-*/SKILL.md` with proper YAML frontmatter. Supports both flat files (`.claude/skills/*.md`) and generated skills (`.claude/skills/generated/*/SKILL.md`).
 
-### 3. Launch the Web UI
+### 4. Launch the Web UI
 
 Visualize the knowledge graph in your browser:
 
@@ -90,7 +99,7 @@ This starts both the **backend** (`http://127.0.0.1:4747`) and **frontend** (`ht
 
 > **Note:** Requires `./setup.sh` to have been run first (clones GitNexus repo and installs dependencies).
 
-### 4. Use in Antigravity
+### 5. Use in Antigravity
 
 Once indexed, Antigravity automatically has access to these MCP tools when working with that codebase:
 

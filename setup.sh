@@ -65,7 +65,7 @@ EOF
   action=$(python3 -c "
 import json, sys
 
-path = '$ANTIGRAVITY_MCP'
+path = sys.argv[1]
 
 with open(path) as f:
     cfg = json.load(f)
@@ -89,7 +89,7 @@ with open(path, 'w') as f:
     f.write('\n')
 
 print(action)
-")
+" "$ANTIGRAVITY_MCP")
 
   case "$action" in
     added)     ok "MCP entry added" ;;

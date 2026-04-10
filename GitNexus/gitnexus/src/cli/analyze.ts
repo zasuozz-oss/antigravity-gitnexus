@@ -146,7 +146,7 @@ export const analyzeCommand = async (
     aborted = true;
     bar.stop();
     console.log('\n  Interrupted — cleaning up...');
-    closeLbug().catch(() => {}).finally(() => process.exit(130));
+    closeLbug().catch(() => { }).finally(() => process.exit(130));
   };
   process.on('SIGINT', sigintHandler);
 
@@ -202,7 +202,7 @@ export const analyzeCommand = async (
       cachedEmbeddings = cached.embeddings;
       await closeLbug();
     } catch {
-      try { await closeLbug(); } catch {}
+      try { await closeLbug(); } catch { }
     }
   }
 
@@ -219,7 +219,7 @@ export const analyzeCommand = async (
   await closeLbug();
   const lbugFiles = [lbugPath, `${lbugPath}.wal`, `${lbugPath}.lock`];
   for (const f of lbugFiles) {
-    try { await fs.rm(f, { recursive: true, force: true }); } catch {}
+    try { await fs.rm(f, { recursive: true, force: true }); } catch { }
   }
 
   const t0Lbug = Date.now();
@@ -310,6 +310,7 @@ export const analyzeCommand = async (
     repoPath,
     lastCommit: currentCommit,
     indexedAt: new Date().toISOString(),
+    ...(ignoreFilter ? { isUnity: true } : {}),  // Unity projects always provide ignoreFilter
     stats: {
       files: pipelineResult.totalFileCount,
       nodes: stats.nodes,
@@ -341,6 +342,8 @@ export const analyzeCommand = async (
     generatedSkills = skillResult.skills;
   }
 
+  const isUnity = !!ignoreFilter;  // Unity projects always provide a custom ignoreFilter
+
   const aiContext = await generateAIContextFiles(repoPath, storagePath, projectName, {
     files: pipelineResult.totalFileCount,
     nodes: stats.nodes,
@@ -348,7 +351,7 @@ export const analyzeCommand = async (
     communities: pipelineResult.communityResult?.stats.totalCommunities,
     clusters: aggregatedClusterCount,
     processes: pipelineResult.processResult?.stats.totalProcesses,
-  }, generatedSkills);
+  }, generatedSkills, isUnity);
 
   await closeLbug();
   // Note: we intentionally do NOT call disposeEmbedder() here.

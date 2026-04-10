@@ -14,6 +14,7 @@ export interface RepoMeta {
   repoPath: string;
   lastCommit: string;
   indexedAt: string;
+  isUnity?: boolean;       // True when indexed via `gitnexus unity analyze`
   stats?: {
     files?: number;
     nodes?: number;
@@ -41,6 +42,7 @@ export interface RegistryEntry {
   storagePath: string;
   indexedAt: string;
   lastCommit: string;
+  isUnity?: boolean;
   stats?: RepoMeta['stats'];
 }
 
@@ -264,6 +266,7 @@ export const registerRepo = async (repoPath: string, meta: RepoMeta): Promise<vo
     storagePath,
     indexedAt: meta.indexedAt,
     lastCommit: meta.lastCommit,
+    isUnity: meta.isUnity,
     stats: meta.stats,
   };
 

@@ -65,6 +65,7 @@ function logQueryError(context: string, err: unknown): void {
 
 export interface CodebaseContext {
   projectName: string;
+  isUnity?: boolean;
   stats: {
     fileCount: number;
     functionCount: number;
@@ -81,6 +82,7 @@ interface RepoHandle {
   lbugPath: string;
   indexedAt: string;
   lastCommit: string;
+  isUnity?: boolean;
   stats?: RegistryEntry['stats'];
 }
 
@@ -131,6 +133,7 @@ export class LocalBackend {
         lbugPath,
         indexedAt: entry.indexedAt,
         lastCommit: entry.lastCommit,
+        isUnity: entry.isUnity,
         stats: entry.stats,
       };
 
@@ -140,6 +143,7 @@ export class LocalBackend {
       const s = entry.stats || {};
       this.contextCache.set(id, {
         projectName: entry.name,
+        isUnity: entry.isUnity,
         stats: {
           fileCount: s.files || 0,
           functionCount: s.nodes || 0,
@@ -282,13 +286,14 @@ export class LocalBackend {
    * Re-reads the global registry so newly indexed repos are discovered
    * without restarting the MCP server.
    */
-  async listRepos(): Promise<Array<{ name: string; path: string; indexedAt: string; lastCommit: string; stats?: any }>> {
+  async listRepos(): Promise<Array<{ name: string; path: string; indexedAt: string; lastCommit: string; stats?: any; isUnity?: boolean }>> {
     await this.refreshRepos();
     return [...this.repos.values()].map(h => ({
       name: h.name,
       path: h.repoPath,
       indexedAt: h.indexedAt,
       lastCommit: h.lastCommit,
+      isUnity: h.isUnity,
       stats: h.stats,
     }));
   }

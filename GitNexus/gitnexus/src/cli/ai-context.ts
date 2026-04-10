@@ -38,11 +38,13 @@ const GITNEXUS_END_MARKER = '<!-- gitnexus:end -->';
  * - Exact tool commands with parameters — vague directives get ignored
  * - Self-review checklist — forces model to verify its own work
  */
-function generateGitNexusContent(projectName: string, stats: RepoStats, generatedSkills?: GeneratedSkillInfo[]): string {
+function generateGitNexusContent(projectName: string, stats: RepoStats, isUnity?: boolean, generatedSkills?: GeneratedSkillInfo[]): string {
+  const analyzeCmd = isUnity ? 'gitnexus unity analyze' : 'npx gitnexus analyze';
+  const analyzeCmdEmbeddings = isUnity ? 'gitnexus unity analyze --embeddings' : 'npx gitnexus analyze --embeddings';
   const generatedRows = (generatedSkills && generatedSkills.length > 0)
     ? generatedSkills.map(s =>
-        `| Work in the ${s.label} area (${s.symbolCount} symbols) | \`.claude/skills/generated/${s.name}/SKILL.md\` |`
-      ).join('\n')
+      `| Work in the ${s.label} area (${s.symbolCount} symbols) | \`.claude/skills/generated/${s.name}/SKILL.md\` |`
+    ).join('\n')
     : '';
 
   const skillsTable = `| Task | Read this skill file |
@@ -59,7 +61,7 @@ function generateGitNexusContent(projectName: string, stats: RepoStats, generate
 
 This project is indexed by GitNexus as **${projectName}** (${stats.nodes || 0} symbols, ${stats.edges || 0} relationships, ${stats.processes || 0} execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
-> If any GitNexus tool warns the index is stale, run \`npx gitnexus analyze\` in terminal first.
+> If any GitNexus tool warns the index is stale, run \`${analyzeCmd}\` in terminal first.
 
 ## Always Do
 
@@ -130,13 +132,13 @@ Before completing any code modification task, verify:
 After committing code changes, the GitNexus index becomes stale. Re-run analyze to update it:
 
 \`\`\`bash
-npx gitnexus analyze
+${analyzeCmd}
 \`\`\`
 
 If the index previously included embeddings, preserve them by adding \`--embeddings\`:
 
 \`\`\`bash
-npx gitnexus analyze --embeddings
+${analyzeCmdEmbeddings}
 \`\`\`
 
 To check whether embeddings exist, inspect \`.gitnexus/meta.json\` — the \`stats.embeddings\` field shows the count (0 means no embeddings). **Running analyze without \`--embeddings\` will delete any previously generated embeddings.**
@@ -285,9 +287,10 @@ export async function generateAIContextFiles(
   _storagePath: string,
   projectName: string,
   stats: RepoStats,
-  generatedSkills?: GeneratedSkillInfo[]
+  generatedSkills?: GeneratedSkillInfo[],
+  isUnity?: boolean
 ): Promise<{ files: string[] }> {
-  const content = generateGitNexusContent(projectName, stats, generatedSkills);
+  const content = generateGitNexusContent(projectName, stats, isUnity, generatedSkills);
   const createdFiles: string[] = [];
 
   // Create AGENTS.md (standard for Cursor, Windsurf, OpenCode, Cline, etc.)

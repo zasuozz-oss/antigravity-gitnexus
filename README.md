@@ -46,10 +46,10 @@ cd gitnexus-setup
 
 The script does four things:
 
-1. **Configures** Antigravity MCP (`~/.gemini/antigravity/mcp_config.json`)
-2. **Installs** `gitnexus-sync` to `~/.local/bin/` — syncs GitNexus skills to Antigravity format
-3. **Clones** the GitNexus repo (via `gh fork` or `git clone`) and installs Web UI dependencies
-4. **Pre-downloads** `gitnexus` via npx cache
+1. **Installs** `gitnexus` globally via `npm install -g gitnexus@latest`
+2. **Configures** Antigravity MCP (`~/.gemini/antigravity/mcp_config.json`)
+3. **Installs** `gitnexus-sync` to `~/.local/bin/` — syncs GitNexus skills to Antigravity format
+4. **Clones** the GitNexus repo (via `gh fork` or `git clone`) and installs Web UI dependencies
 
 After completion → **restart Antigravity** to load the MCP server.
 
@@ -140,7 +140,7 @@ gitnexus_rename({symbol_name: "oldName", new_name: "newName", dry_run: true})
 
 ```
 gitnexus-setup/
-├── setup.sh          # Main setup — MCP config, sync install, Web UI clone, npx cache
+├── setup.sh          # Main setup — global install, MCP config, sync install, Web UI clone
 ├── sync-skills.sh    # Bridge .claude/skills/ → .agents/skills/ (Antigravity format)
 ├── web-ui.sh         # Launch backend + frontend in one command
 ├── test-sync.sh      # Test suite for sync-skills.sh (6 tests)
@@ -175,20 +175,24 @@ Covers: flat skills, generated skills, frontmatter rewriting, idempotency, grace
 
 ## How it works
 
-The script configures `~/.gemini/antigravity/mcp_config.json`:
+The script installs gitnexus globally and configures `~/.gemini/antigravity/mcp_config.json`:
+
+```bash
+npm install -g gitnexus@latest
+```
 
 ```json
 {
   "mcpServers": {
     "gitnexus": {
-      "command": "npx",
-      "args": ["-y", "gitnexus@latest", "mcp"]
+      "command": "gitnexus",
+      "args": ["mcp"]
     }
   }
 }
 ```
 
-Uses `npx gitnexus@latest` — always uses the latest version, no hardcoded paths, works on any machine.
+Uses globally installed `gitnexus` command instead of `npx` to avoid a known npm v11 arborist bug with git dependencies (`tree-sitter-dart`). To update: `npm install -g gitnexus@latest`.
 
 ---
 

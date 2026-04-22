@@ -51,15 +51,15 @@ configure_mcp() {
     warn "python3 not found — add manually to $ANTIGRAVITY_MCP:"
     cat << 'EOF'
   "gitnexus": {
-    "command": "npx",
-    "args": ["-y", "gitnexus@latest", "mcp"]
+    "command": "gitnexus",
+    "args": ["mcp"]
   }
 EOF
     return
   fi
 
   mkdir -p "$(dirname "$ANTIGRAVITY_MCP")"
-  [ -f "$ANTIGRAVITY_MCP" ] || echo '{"mcpServers":{}}' > "$ANTIGRAVITY_MCP"
+  [ -s "$ANTIGRAVITY_MCP" ] || echo '{"mcpServers":{}}' > "$ANTIGRAVITY_MCP"
 
   local action
   action=$(python3 -c "
@@ -72,8 +72,8 @@ with open(path) as f:
 
 servers = cfg.setdefault('mcpServers', {})
 expected = {
-    'command': 'npx',
-    'args': ['-y', 'gitnexus@latest', 'mcp']
+    'command': 'gitnexus',
+    'args': ['mcp']
 }
 existing = servers.get('gitnexus')
 
@@ -97,17 +97,27 @@ print(action)
     unchanged) ok "MCP already configured" ;;
   esac
 
-  info "MCP command: npx -y gitnexus@latest mcp (or local gitnexus mcp if linked)"
+  info "MCP command: gitnexus mcp (installed globally via npm install -g)"
 }
 
-# ── Warm cache (optional, non-blocking) ──────────────────────
-warm_cache() {
-  step "Pre-downloading gitnexus"
-  info "Running npx to cache gitnexus (this may take a moment)..."
-  if npx -y gitnexus@latest --version 2>/dev/null; then
-    ok "gitnexus v$(npx -y gitnexus@latest --version 2>/dev/null) cached"
+# ── Install gitnexus globally ────────────────────────────────
+install_gitnexus_global() {
+  step "Installing gitnexus globally"
+
+  if command -v gitnexus &>/dev/null; then
+    local current_ver
+    current_ver=$(gitnexus --version 2>/dev/null || echo "unknown")
+    ok "gitnexus v${current_ver} already installed"
+    info "To update: npm install -g gitnexus@latest"
+    return
+  fi
+
+  info "Running npm install -g gitnexus@latest..."
+  if npm install -g gitnexus@latest 2>&1 | tail -3; then
+    ok "gitnexus v$(gitnexus --version 2>/dev/null) installed globally"
   else
-    warn "Pre-download failed — Antigravity will download on first use"
+    err "Failed to install gitnexus globally"
+    info "Try manually: npm install -g gitnexus@latest"
   fi
 }
 
@@ -202,7 +212,7 @@ main() {
   install_sync_script
   fork_web_ui
   setup_cli_build
-  warm_cache
+  install_gitnexus_global
 
   echo ""
   echo -e "${GREEN}═══════════════════════════════════════════${NC}"

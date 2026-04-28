@@ -5,8 +5,7 @@
  * Each test file clears all data, reseeds, and initializes adapters —
  * avoiding per-file schema creation overhead.
  *
- * Cleanup is intentionally a no-op: CI runs each LadybugDB test file in its
- * own vitest process, so the OS reclaims all native resources on exit.
+ * Cleanup properly closes adapters and releases native resources.
  *
  * Each test file gets a unique repoId to prevent MCP pool map collisions.
  * Seed data is NOT included — each test provides its own via options.seed.
@@ -15,10 +14,7 @@
 import path from 'path';
 import { describe, beforeAll, afterAll, inject } from 'vitest';
 import type { TestDBHandle } from './test-db.js';
-import {
-  NODE_TABLES,
-  EMBEDDING_TABLE_NAME,
-} from '../../src/core/lbug/schema.js';
+import { NODE_TABLES, EMBEDDING_TABLE_NAME } from '../../src/core/lbug/schema.js';
 
 export interface IndexedDBHandle {
   /** Path to the LadybugDB database file */
@@ -27,7 +23,7 @@ export interface IndexedDBHandle {
   repoId: string;
   /** Temp directory handle for filesystem cleanup */
   tmpHandle: TestDBHandle;
-  /** Cleanup: detaches adapters (null-out, no native .close()) */
+  /** Cleanup: closes adapters and releases native resources */
   cleanup: () => Promise<void>;
 }
 
@@ -55,7 +51,7 @@ export interface WithTestLbugDBOptions {
   poolAdapter?: boolean;
   /** Run after all lifecycle phases complete (mocks, dynamic imports, etc). */
   afterSetup?: (handle: IndexedDBHandle) => Promise<void>;
-  /** Timeout for beforeAll in ms (default: 30000). */
+  /** Timeout for beforeAll in ms (default: 120000). */
   timeout?: number;
 }
 
@@ -76,7 +72,9 @@ export function withTestLbugDB(
   options?: WithTestLbugDBOptions,
 ): void {
   const ref: { handle: IndexedDBHandle | undefined } = { handle: undefined };
-  const timeout = options?.timeout ?? 30000;
+  // Default must match vitest.config hookTimeout (120s). KuzuDB pool-adapter
+  // init on Windows CI regularly exceeds 30s due to native resource setup.
+  const timeout = options?.timeout ?? 120_000;
 
   const setup = async () => {
     // Get shared DB path from globalSetup (created once with full schema)
@@ -89,55 +87,57 @@ export function withTestLbugDB(
     //    already open for this dbPath (no new native objects created).
     await adapter.initLbug(dbPath);
 
-    // 2. Load FTS extension (idempotent — skips if already loaded)
-    await adapter.loadFTSExtension();
-
-    // 3. Drop stale FTS indexes from previous test file
+    // 2. Drop stale FTS indexes from previous test file
     if (options?.ftsIndexes?.length) {
       for (const idx of options.ftsIndexes) {
-        try { await adapter.dropFTSIndex(idx.table, idx.indexName); } catch { /* may not exist */ }
+        try {
+          await adapter.dropFTSIndex(idx.table, idx.indexName);
+        } catch {
+          /* may not exist */
+        }
       }
     }
 
-    // 4. Clear all data via adapter (DETACH DELETE cascades to relationships)
+    // 3. Clear all data via adapter (DETACH DELETE cascades to relationships)
     for (const table of NODE_TABLES) {
       await adapter.executeQuery(`MATCH (n:\`${table}\`) DETACH DELETE n`);
     }
     await adapter.executeQuery(`MATCH (n:${EMBEDDING_TABLE_NAME}) DELETE n`);
 
-    // 5. Seed new data via adapter
+    // 4. Seed new data via adapter
     if (options?.seed?.length) {
       for (const q of options.seed) {
         await adapter.executeQuery(q);
       }
     }
 
-    // 6. Create FTS indexes on fresh data
+    // 5. Create FTS indexes on fresh data
     if (options?.ftsIndexes?.length) {
       for (const idx of options.ftsIndexes) {
         await adapter.createFTSIndex(idx.table, idx.indexName, idx.columns);
       }
     }
 
-    // 7. Close core adapter (Windows only), then open pool adapter (read-only).
-    //    On Windows, LadybugDB enforces file locks — writable + read-only
-    //    can't coexist on the same path, so we must close the core first.
-    //    On Linux/macOS, .close() deadlocks or segfaults via N-API
-    //    destructor hooks, but concurrent Database instances on the same
-    //    path are allowed, so we skip the close entirely.
+    // 6. Open pool adapter by injecting the core adapter's writable Database.
+    //    LadybugDB enforces file locks — writable + read-only can't coexist
+    //    on the same path, and db.close() segfaults on macOS due to N-API
+    //    destructor issues.  Reusing the writable Database avoids both problems.
+    //    Write protection is enforced at the query validation layer (isWriteQuery)
+    //    rather than at the native DB level.
     if (options?.poolAdapter) {
-      if (process.platform === 'win32') {
-        await adapter.closeLbug();
-      }
-      const { initLbug: poolInitLbug } = await import('../../src/mcp/core/lbug-adapter.js');
-      await poolInitLbug(repoId, dbPath);
+      const coreDb = adapter.getDatabase();
+      if (!coreDb) throw new Error('withTestLbugDB: core adapter has no open Database');
+      const { initLbugWithDb } = await import('../../src/core/lbug/pool-adapter.js');
+      await initLbugWithDb(repoId, coreDb, dbPath);
     }
 
-    // Cleanup: intentionally a no-op. We do NOT call detachLbug() here
-    // because .closeSync() segfaults on Linux (LadybugDB N-API destructor bug).
-    // CI runs each LadybugDB test file in its own vitest process, so the OS
-    // reclaims all native resources on process exit — no explicit cleanup needed.
-    const cleanup = async () => {};
+    const cleanup = async () => {
+      if (options?.poolAdapter) {
+        const poolAdapter = await import('../../src/core/lbug/pool-adapter.js');
+        await poolAdapter.closeLbug(repoId);
+      }
+      await adapter.closeLbug();
+    };
 
     // tmpHandle.dbPath → parent temp dir (not the lbug file) so tests
     // that create sibling directories (e.g. 'storage') still work.
@@ -145,7 +145,7 @@ export function withTestLbugDB(
     const tmpHandle: TestDBHandle = { dbPath: tmpDir, cleanup: async () => {} };
     ref.handle = { dbPath, repoId, tmpHandle, cleanup };
 
-    // 8. User's final setup (mocks, dynamic imports, etc.)
+    // 7. User's final setup (mocks, dynamic imports, etc.)
     if (options?.afterSetup) {
       await options.afterSetup(ref.handle);
     }
@@ -153,7 +153,8 @@ export function withTestLbugDB(
 
   const lazyHandle = new Proxy({} as IndexedDBHandle, {
     get(_target, prop) {
-      if (!ref.handle) throw new Error('withTestLbugDB: handle not initialized — beforeAll has not run yet');
+      if (!ref.handle)
+        throw new Error('withTestLbugDB: handle not initialized — beforeAll has not run yet');
       return (ref.handle as any)[prop];
     },
   });
@@ -162,7 +163,13 @@ export function withTestLbugDB(
   // collisions when multiple withTestLbugDB calls share the same file.
   describe(`withTestLbugDB(${prefix})`, () => {
     beforeAll(setup, timeout);
-    afterAll(async () => { if (ref.handle) await ref.handle.cleanup(); });
+    // Explicit timeout: KuzuDB's C++ destructor can hang on Windows during
+    // native resource cleanup.  The vitest hookTimeout (120s) should apply
+    // automatically, but some vitest versions fall back to testTimeout (30s)
+    // for afterAll.  Pass 120s explicitly to avoid CI flakes on Windows.
+    afterAll(async () => {
+      if (ref.handle) await ref.handle.cleanup();
+    }, 120_000);
     fn(lazyHandle);
   });
 }

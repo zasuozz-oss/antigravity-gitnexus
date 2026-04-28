@@ -12,7 +12,7 @@
  * NOTE: We test the server handler logic by calling the request handlers
  * directly through the MCP Server's handler dispatch.
  */
-import { describe, it, expect, vi, beforeAll } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createMCPServer } from '../../src/mcp/server.js';
 
 // ─── Mock backend ──────────────────────────────────────────────────
@@ -21,7 +21,9 @@ function createMockBackend(overrides: Record<string, any> = {}): any {
   return {
     callTool: vi.fn().mockResolvedValue({ result: 'ok' }),
     listRepos: vi.fn().mockResolvedValue([]),
-    resolveRepo: vi.fn().mockResolvedValue({ name: 'test', repoPath: '/tmp/test', lastCommit: 'abc' }),
+    resolveRepo: vi
+      .fn()
+      .mockResolvedValue({ name: 'test', repoPath: '/tmp/test', lastCommit: 'abc' }),
     getContext: vi.fn().mockReturnValue(null),
     queryClusters: vi.fn().mockResolvedValue({ clusters: [] }),
     queryProcesses: vi.fn().mockResolvedValue({ processes: [] }),

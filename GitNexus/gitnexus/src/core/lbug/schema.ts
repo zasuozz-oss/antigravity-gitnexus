@@ -1,38 +1,19 @@
 /**
  * LadybugDB Schema Definitions
- * 
+ *
  * Hybrid Schema:
  * - Separate node tables for each code element type (File, Function, Class, etc.)
  * - Single CodeRelation table with 'type' property for all relationships
- * 
+ *
  * This allows LLMs to write natural Cypher queries like:
  *   MATCH (f:Function)-[r:CodeRelation {type: 'CALLS'}]->(g:Function) RETURN f, g
  */
 
-// ============================================================================
-// NODE TABLE NAMES
-// ============================================================================
-export const NODE_TABLES = [
-  'File', 'Folder', 'Function', 'Class', 'Interface', 'Method', 'CodeElement', 'Community', 'Process',
-  // Multi-language support
-  'Struct', 'Enum', 'Macro', 'Typedef', 'Union', 'Namespace', 'Trait', 'Impl',
-  'TypeAlias', 'Const', 'Static', 'Property', 'Record', 'Delegate', 'Annotation', 'Constructor', 'Template', 'Module'
-] as const;
-export type NodeTableName = typeof NODE_TABLES[number];
-
-// ============================================================================
-// RELATION TABLE
-// ============================================================================
-export const REL_TABLE_NAME = 'CodeRelation';
-
-// Valid relation types
-export const REL_TYPES = ['CONTAINS', 'DEFINES', 'IMPORTS', 'CALLS', 'EXTENDS', 'IMPLEMENTS', 'HAS_METHOD', 'HAS_PROPERTY', 'ACCESSES', 'OVERRIDES', 'MEMBER_OF', 'STEP_IN_PROCESS'] as const;
-export type RelType = typeof REL_TYPES[number];
-
-// ============================================================================
-// EMBEDDING TABLE
-// ============================================================================
-export const EMBEDDING_TABLE_NAME = 'CodeEmbedding';
+// Import from shared package (single source of truth) — used in DDL templates below
+import { NODE_TABLES, REL_TABLE_NAME, REL_TYPES, EMBEDDING_TABLE_NAME } from 'gitnexus-shared';
+// Re-export so downstream consumers keep the same import path
+export { NODE_TABLES, REL_TABLE_NAME, REL_TYPES, EMBEDDING_TABLE_NAME };
+export type { NodeTableName, RelType } from 'gitnexus-shared';
 
 // ============================================================================
 // NODE TABLE SCHEMAS
@@ -185,6 +166,7 @@ export const IMPL_SCHEMA = CODE_ELEMENT_BASE('Impl');
 export const TYPE_ALIAS_SCHEMA = CODE_ELEMENT_BASE('TypeAlias');
 export const CONST_SCHEMA = CODE_ELEMENT_BASE('Const');
 export const STATIC_SCHEMA = CODE_ELEMENT_BASE('Static');
+export const VARIABLE_SCHEMA = CODE_ELEMENT_BASE('Variable');
 export const PROPERTY_SCHEMA = CODE_ELEMENT_BASE('Property');
 export const RECORD_SCHEMA = CODE_ELEMENT_BASE('Record');
 export const DELEGATE_SCHEMA = CODE_ELEMENT_BASE('Delegate');
@@ -192,6 +174,41 @@ export const ANNOTATION_SCHEMA = CODE_ELEMENT_BASE('Annotation');
 export const CONSTRUCTOR_SCHEMA = CODE_ELEMENT_BASE('Constructor');
 export const TEMPLATE_SCHEMA = CODE_ELEMENT_BASE('Template');
 export const MODULE_SCHEMA = CODE_ELEMENT_BASE('Module');
+// API route endpoints (Next.js, Express, etc.)
+export const ROUTE_SCHEMA = `
+CREATE NODE TABLE Route (
+  id STRING,
+  name STRING,
+  filePath STRING,
+  responseKeys STRING[],
+  errorKeys STRING[],
+  middleware STRING[],
+  PRIMARY KEY (id)
+)`;
+
+// MCP tool definitions
+export const TOOL_SCHEMA = `
+CREATE NODE TABLE Tool (
+  id STRING,
+  name STRING,
+  filePath STRING,
+  description STRING,
+  PRIMARY KEY (id)
+)`;
+
+// Markdown heading sections
+export const SECTION_SCHEMA = `
+CREATE NODE TABLE Section (
+  id STRING,
+  name STRING,
+  filePath STRING,
+  startLine INT64,
+  endLine INT64,
+  level INT64,
+  content STRING,
+  description STRING,
+  PRIMARY KEY (id)
+)`;
 
 // ============================================================================
 // RELATION TABLE SCHEMA
@@ -218,6 +235,7 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
   FROM File TO \`TypeAlias\`,
   FROM File TO \`Const\`,
   FROM File TO \`Static\`,
+  FROM File TO \`Variable\`,
   FROM File TO \`Property\`,
   FROM File TO \`Record\`,
   FROM File TO \`Delegate\`,
@@ -225,6 +243,7 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
   FROM File TO \`Constructor\`,
   FROM File TO \`Template\`,
   FROM File TO \`Module\`,
+  FROM File TO Section,
   FROM Folder TO Folder,
   FROM Folder TO File,
   FROM Function TO Function,
@@ -245,6 +264,7 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
   FROM Function TO \`Typedef\`,
   FROM Function TO \`Union\`,
   FROM Function TO \`Property\`,
+  FROM Function TO CodeElement,
   FROM Class TO Method,
   FROM Class TO Function,
   FROM Class TO Class,
@@ -278,6 +298,7 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
   FROM Method TO Interface,
   FROM Method TO \`Constructor\`,
   FROM Method TO \`Property\`,
+  FROM Method TO CodeElement,
   FROM \`Template\` TO \`Template\`,
   FROM \`Template\` TO Function,
   FROM \`Template\` TO Method,
@@ -289,6 +310,14 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
   FROM \`Template\` TO Interface,
   FROM \`Template\` TO \`Constructor\`,
   FROM \`Module\` TO \`Module\`,
+  FROM Section TO Section,
+  FROM Section TO File,
+  FROM File TO Route,
+  FROM Function TO Route,
+  FROM Method TO Route,
+  FROM File TO Tool,
+  FROM Function TO Tool,
+  FROM Method TO Tool,
   FROM CodeElement TO Community,
   FROM Interface TO Community,
   FROM Interface TO Function,
@@ -338,6 +367,7 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
   FROM \`TypeAlias\` TO Class,
   FROM \`Const\` TO Community,
   FROM \`Static\` TO Community,
+  FROM \`Variable\` TO Community,
   FROM \`Property\` TO Community,
   FROM \`Record\` TO Method,
   FROM \`Record\` TO \`Constructor\`,
@@ -381,12 +411,15 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
   FROM \`Trait\` TO Process,
   FROM \`Const\` TO Process,
   FROM \`Static\` TO Process,
+  FROM \`Variable\` TO Process,
   FROM \`Property\` TO Process,
   FROM \`Record\` TO Process,
   FROM \`Delegate\` TO Process,
   FROM \`Annotation\` TO Process,
   FROM \`Template\` TO Process,
   FROM CodeElement TO Process,
+  FROM Route TO Process,
+  FROM Tool TO Process,
   type STRING,
   confidence DOUBLE,
   reason STRING,
@@ -398,11 +431,34 @@ CREATE REL TABLE ${REL_TABLE_NAME} (
 // Separate table for vector storage to avoid copy-on-write overhead
 // ============================================================================
 
+/** Embedding vector dimensions. Default 384 (snowflake-arctic-embed-xs). */
+const _rawDims = parseInt(process.env.GITNEXUS_EMBEDDING_DIMS ?? '384', 10);
+if (Number.isNaN(_rawDims) || _rawDims <= 0) {
+  throw new Error(
+    `GITNEXUS_EMBEDDING_DIMS must be a positive integer, got "${process.env.GITNEXUS_EMBEDDING_DIMS}"`,
+  );
+}
+export const EMBEDDING_DIMS = _rawDims;
+
+/** HNSW vector index name for the CodeEmbedding table. */
+export const EMBEDDING_INDEX_NAME = 'code_embedding_idx';
+
+/**
+ * Sentinel value for "no content hash available" — used in legacy DBs and null rows.
+ * Nodes with this hash are always treated as stale and re-embedded.
+ */
+export const STALE_HASH_SENTINEL = '';
+
 export const EMBEDDING_SCHEMA = `
 CREATE NODE TABLE ${EMBEDDING_TABLE_NAME} (
+  id STRING,
   nodeId STRING,
-  embedding FLOAT[384],
-  PRIMARY KEY (nodeId)
+  chunkIndex INT32,
+  startLine INT64,
+  endLine INT64,
+  embedding FLOAT[${EMBEDDING_DIMS}],
+  contentHash STRING,
+  PRIMARY KEY (id)
 )`;
 
 /**
@@ -410,7 +466,7 @@ CREATE NODE TABLE ${EMBEDDING_TABLE_NAME} (
  * Uses HNSW (Hierarchical Navigable Small World) algorithm with cosine similarity
  */
 export const CREATE_VECTOR_INDEX_QUERY = `
-CALL CREATE_VECTOR_INDEX('${EMBEDDING_TABLE_NAME}', 'code_embedding_idx', 'embedding', metric := 'cosine')
+CALL CREATE_VECTOR_INDEX('${EMBEDDING_TABLE_NAME}', '${EMBEDDING_INDEX_NAME}', 'embedding', metric := 'cosine')
 `;
 
 // ============================================================================
@@ -440,6 +496,7 @@ export const NODE_SCHEMA_QUERIES = [
   TYPE_ALIAS_SCHEMA,
   CONST_SCHEMA,
   STATIC_SCHEMA,
+  VARIABLE_SCHEMA,
   PROPERTY_SCHEMA,
   RECORD_SCHEMA,
   DELEGATE_SCHEMA,
@@ -447,14 +504,14 @@ export const NODE_SCHEMA_QUERIES = [
   CONSTRUCTOR_SCHEMA,
   TEMPLATE_SCHEMA,
   MODULE_SCHEMA,
+  // Markdown support
+  SECTION_SCHEMA,
+  // API routes
+  ROUTE_SCHEMA,
+  // MCP tools
+  TOOL_SCHEMA,
 ];
 
-export const REL_SCHEMA_QUERIES = [
-  RELATION_SCHEMA,
-];
+export const REL_SCHEMA_QUERIES = [RELATION_SCHEMA];
 
-export const SCHEMA_QUERIES = [
-  ...NODE_SCHEMA_QUERIES,
-  ...REL_SCHEMA_QUERIES,
-  EMBEDDING_SCHEMA,
-];
+export const SCHEMA_QUERIES = [...NODE_SCHEMA_QUERIES, ...REL_SCHEMA_QUERIES, EMBEDDING_SCHEMA];

@@ -6,19 +6,17 @@
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
 import { createLazyAction } from './lazy-action.js';
+import { registerGroupCommands } from './group.js';
 
 const _require = createRequire(import.meta.url);
 const pkg = _require('../../package.json');
 const program = new Command();
 
-program
-  .name('gitnexus')
-  .description('GitNexus local CLI and MCP server')
-  .version(pkg.version);
+program.name('gitnexus').description('GitNexus local CLI and MCP server').version(pkg.version);
 
 program
   .command('setup')
-  .description('One-time setup: configure MCP for Cursor, Claude Code, OpenCode')
+  .description('One-time setup: configure MCP for Cursor, Claude Code, OpenCode, Codex')
   .action(createLazyAction(() => import('./setup.js'), 'setupCommand'));
 
 program
@@ -26,24 +24,54 @@ program
   .description('Index a repository (full analysis)')
   .option('-f, --force', 'Force full re-index even if up to date')
   .option('--embeddings', 'Enable embedding generation for semantic search (off by default)')
+  .option(
+    '--drop-embeddings',
+    'Drop existing embeddings on rebuild. By default, an `analyze` without `--embeddings` ' +
+      'preserves any embeddings already present in the index.',
+  )
   .option('--skills', 'Generate repo-specific skill files from detected communities')
-   .option('-v, --verbose', 'Enable verbose ingestion warnings (default: false)')
-   .addHelpText('after', '\nEnvironment variables:\n  GITNEXUS_NO_GITIGNORE=1  Skip .gitignore parsing (still reads .gitnexusignore)')
-   .action(createLazyAction(() => import('./analyze.js'), 'analyzeCommand'));
+  .option('--skip-agents-md', 'Skip updating the gitnexus section in AGENTS.md and CLAUDE.md')
+  .option('--no-stats', 'Omit volatile file/symbol counts from AGENTS.md and CLAUDE.md')
+  .option('--skip-git', 'Index a folder without requiring a .git directory')
+  .option(
+    '--name <alias>',
+    'Register this repo under a custom name in ~/.gitnexus/registry.json ' +
+      '(disambiguates repos whose paths share a basename, e.g. two different .../app folders)',
+  )
+  .option(
+    '--allow-duplicate-name',
+    'Register this repo even if another path already uses the same --name alias. ' +
+      'Leaves `-r <name>` ambiguous for the two paths; use -r <path> to disambiguate.',
+  )
+  .option('-v, --verbose', 'Enable verbose ingestion warnings (default: false)')
+  .option(
+    '--max-file-size <kb>',
+    'Skip files larger than this (KB). Default: 512. Hard cap: 32768 (tree-sitter limit).',
+  )
+  .option(
+    '--worker-timeout <seconds>',
+    'Worker sub-batch idle timeout before retry/fallback. Default: 30.',
+  )
+  .addHelpText(
+    'after',
+    '\nEnvironment variables:\n' +
+      '  GITNEXUS_NO_GITIGNORE=1   Skip .gitignore parsing (still reads .gitnexusignore)\n' +
+      '  GITNEXUS_MAX_FILE_SIZE=N  Override large-file skip threshold (KB). Default 512, max 32768.\n' +
+      '  GITNEXUS_WORKER_SUB_BATCH_TIMEOUT_MS=N  Worker idle timeout in milliseconds. Default 30000.\n' +
+      '  GITNEXUS_WORKER_SUB_BATCH_MAX_BYTES=N  Worker job byte budget. Default 8388608.\n' +
+      '\nTip: `.gitnexusignore` supports `.gitignore`-style negation. Add e.g.\n' +
+      '     `!__tests__/` to index a directory that is auto-filtered by default (#771).',
+  )
+  .action(createLazyAction(() => import('./analyze.js'), 'analyzeCommand'));
 
-// ─── Unity Project Tools ───────────────────────────────────────────
-const unity = program
-  .command('unity')
-  .description('Unity project tools');
-
-unity
-  .command('analyze [path]')
-  .description('Index a Unity project with smart SDK detection')
-  .option('-f, --force', 'Force full re-index')
-  .option('--embeddings', 'Enable embedding generation')
-  .option('--reset-config', 'Reset unity.json and re-scan')
-  .option('-v, --verbose', 'Verbose output')
-  .action(createLazyAction(() => import('./unity-analyze.js'), 'unityAnalyzeCommand'));
+program
+  .command('index [path...]')
+  .description(
+    'Register an existing .gitnexus/ folder into the global registry (no re-analysis needed)',
+  )
+  .option('-f, --force', 'Register even if meta.json is missing (stats will be empty)')
+  .option('--allow-non-git', 'Allow registering folders that are not Git repositories')
+  .action(createLazyAction(() => import('./index-repo.js'), 'indexCommand'));
 
 program
   .command('serve')
@@ -75,14 +103,38 @@ program
   .action(createLazyAction(() => import('./clean.js'), 'cleanCommand'));
 
 program
+  .command('remove <target>')
+  .description(
+    'Delete the GitNexus index for a registered repo (by alias, name, or absolute path). ' +
+      'Unlike `clean`, does not require being inside the repo. Idempotent on unknown targets.',
+  )
+  .option('-f, --force', 'Skip confirmation prompt')
+  .action(createLazyAction(() => import('./remove.js'), 'removeCommand'));
+
+program
   .command('wiki [path]')
   .description('Generate repository wiki from knowledge graph')
   .option('-f, --force', 'Force full regeneration even if up to date')
-  .option('--model <model>', 'LLM model name (default: minimax/minimax-m2.5)')
-  .option('--base-url <url>', 'LLM API base URL (default: OpenAI)')
-  .option('--api-key <key>', 'LLM API key (saved to ~/.gitnexus/config.json)')
+  .option('--provider <provider>', 'LLM provider: openai or cursor (default: openai)')
+  .option('--model <model>', 'LLM model or Azure deployment name (default: minimax/minimax-m2.5)')
+  .option(
+    '--base-url <url>',
+    'LLM API base URL. Azure v1: https://{resource}.openai.azure.com/openai/v1',
+  )
+  .option('--api-key <key>', 'LLM API key or Azure api-key (saved to ~/.gitnexus/config.json)')
+  .option(
+    '--api-version <version>',
+    'Azure api-version query param, e.g. 2024-10-21 (legacy Azure API only)',
+  )
+  .option(
+    '--reasoning-model',
+    'Mark deployment as reasoning model (o1/o3/o4-mini) — strips temperature, uses max_completion_tokens',
+  )
+  .option('--no-reasoning-model', 'Disable reasoning model mode (overrides saved config)')
   .option('--concurrency <n>', 'Parallel LLM calls (default: 3)', '3')
   .option('--gist', 'Publish wiki as a public GitHub Gist after generation')
+  .option('-v, --verbose', 'Enable verbose output (show LLM commands and responses)')
+  .option('--review', 'Stop after grouping to review module structure before generating pages')
   .action(createLazyAction(() => import('./wiki.js'), 'wikiCommand'));
 
 program
@@ -127,6 +179,15 @@ program
   .option('-r, --repo <name>', 'Target repository')
   .action(createLazyAction(() => import('./tool.js'), 'cypherCommand'));
 
+program
+  .command('detect-changes')
+  .alias('detect_changes')
+  .description('Map git diff hunks to indexed symbols and affected execution flows')
+  .option('-s, --scope <scope>', 'What to analyze: unstaged, staged, all, or compare', 'unstaged')
+  .option('-b, --base-ref <ref>', 'Branch/commit for compare scope (e.g. main)')
+  .option('-r, --repo <name>', 'Target repository')
+  .action(createLazyAction(() => import('./tool.js'), 'detectChangesCommand'));
+
 // ─── Eval Server (persistent daemon for SWE-bench) ─────────────────
 
 program
@@ -135,5 +196,7 @@ program
   .option('-p, --port <port>', 'Port number', '4848')
   .option('--idle-timeout <seconds>', 'Auto-shutdown after N seconds idle (0 = disabled)', '0')
   .action(createLazyAction(() => import('./eval-server.js'), 'evalServerCommand'));
+
+registerGroupCommands(program);
 
 program.parse(process.argv);

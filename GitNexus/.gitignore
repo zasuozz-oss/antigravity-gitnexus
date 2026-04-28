@@ -23,6 +23,7 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+docker/.env
 
 # Logs
 *.log
@@ -33,6 +34,8 @@ coverage/
 
 # Misc
 *.local
+HANDOFF.md
+HANDOFF*.md
 
 .vercel
 
@@ -57,6 +60,14 @@ assets/
 # Generated files (should not be indexed)
 repomix-output*
 
+# Playwright artifacts
+gitnexus-web/playwright-report/
+gitnexus-web/test-results/
+
+# Python test artifacts
+eval/.coverage
+eval/.hypothesis/
+
 # Design docs (local only)
 docs/plans/
 
@@ -70,3 +81,29 @@ gitnexus/test/fixtures/lang-resolution/**/bin
 GitNexus.sln
 # Git worktrees
 .worktrees/
+
+# Vendored tree-sitter grammar build artifacts (created at install time,
+# never committed). See docs/plans/2026-04-15-002-fix-tree-sitter-proto-vendor-deps-plan.md
+gitnexus/vendor/**/build/
+gitnexus/vendor/**/node_modules/
+
+/github/scripts/triage/__pycache__/
+
+.claude-flow/
+
+.claude/agents/
+.claude/commands/
+.claude/helpers
+.claude/skills/
+!.claude/skills/gitnexus/
+
+.history/
+
+.swarm/
+
+local_docs/
+
+# Local agent scratch / review prompts (never commit)
+.tmp/
+.agents/
+.context/

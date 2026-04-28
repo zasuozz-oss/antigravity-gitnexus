@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 // Mock all the heavy imports before importing index
 vi.mock('../../src/cli/analyze.js', () => ({
@@ -24,7 +24,7 @@ describe('CLI commands', () => {
       const pkg = await import('../../package.json', { with: { type: 'json' } });
       expect(pkg.default.scripts.test).toBeDefined();
       expect(pkg.default.scripts['test:integration']).toBeDefined();
-      expect(pkg.default.scripts['test:all']).toBeDefined();
+      expect(pkg.default.scripts['test:unit']).toBeDefined();
     });
 
     it('has build script', async () => {
@@ -38,6 +38,15 @@ describe('CLI commands', () => {
       const pkg = await import('../../package.json', { with: { type: 'json' } });
       expect(pkg.default.bin).toBeDefined();
       expect(pkg.default.bin.gitnexus || pkg.default.bin).toBeDefined();
+    });
+  });
+
+  describe('optional parser dependencies', () => {
+    it('uses vendored source for tree-sitter-dart instead of a remote dependency', async () => {
+      const pkg = await import('../../package.json', { with: { type: 'json' } });
+      expect(pkg.default.optionalDependencies['tree-sitter-dart']).toBe(
+        'file:./vendor/tree-sitter-dart',
+      );
     });
   });
 

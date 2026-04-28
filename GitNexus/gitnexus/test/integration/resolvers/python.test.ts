@@ -1,12 +1,28 @@
 /**
  * Python: relative imports + class inheritance + ambiguous module disambiguation
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import path from 'path';
+import fs from 'node:fs';
+import os from 'node:os';
 import {
-  FIXTURES, getRelationships, getNodesByLabel, edgeSet,
-  runPipelineFromRepo, type PipelineResult,
+  FIXTURES,
+  CROSS_FILE_FIXTURES,
+  getRelationships,
+  getNodesByLabel,
+  getNodesByLabelFull,
+  edgeSet,
+  runPipelineFromRepo,
+  type PipelineResult,
 } from './helpers.js';
+
+function writeFixtureRepo(root: string, files: Record<string, string>): void {
+  for (const [relPath, content] of Object.entries(files)) {
+    const fullPath = path.join(root, relPath);
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    fs.writeFileSync(fullPath, content, 'utf8');
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Heritage: relative imports + class inheritance
@@ -16,15 +32,18 @@ describe('Python relative import & heritage resolution', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-pkg'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-pkg'), () => {});
   }, 60000);
 
-  it('detects exactly 3 classes and 5 functions', () => {
+  it('classifies top-level functions separately from class methods', () => {
     expect(getNodesByLabel(result, 'Class')).toEqual(['AuthService', 'BaseModel', 'User']);
-    expect(getNodesByLabel(result, 'Function')).toEqual(['authenticate', 'get_name', 'process_model', 'save', 'validate']);
+    expect(getNodesByLabel(result, 'Function')).toEqual(['process_model']);
+    expect(getNodesByLabel(result, 'Method')).toEqual([
+      'authenticate',
+      'get_name',
+      'save',
+      'validate',
+    ]);
   });
 
   it('emits exactly 1 EXTENDS edge: User → BaseModel', () => {
@@ -55,7 +74,7 @@ describe('Python relative import & heritage resolution', () => {
   });
 
   it('no OVERRIDES edges target Property nodes', () => {
-    const overrides = getRelationships(result, 'OVERRIDES');
+    const overrides = getRelationships(result, 'METHOD_OVERRIDES');
     for (const edge of overrides) {
       const target = result.graph.getNode(edge.rel.targetId);
       expect(target).toBeDefined();
@@ -72,15 +91,12 @@ describe('Python ambiguous symbol resolution', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-ambiguous'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-ambiguous'), () => {});
   }, 60000);
 
   it('detects 2 Handler classes', () => {
     const classes = getNodesByLabel(result, 'Class');
-    expect(classes.filter(n => n === 'Handler').length).toBe(2);
+    expect(classes.filter((n) => n === 'Handler').length).toBe(2);
     expect(classes).toContain('UserHandler');
   });
 
@@ -110,10 +126,7 @@ describe('Python call resolution with arity filtering', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-calls'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-calls'), () => {});
   }, 60000);
 
   it('resolves run → write_audit to one.py via arity narrowing', () => {
@@ -134,24 +147,24 @@ describe('Python member-call resolution', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-member-calls'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-member-calls'), () => {});
   }, 60000);
 
   it('resolves process_user → save as a member call on User', () => {
     const calls = getRelationships(result, 'CALLS');
-    const saveCall = calls.find(c => c.target === 'save');
+    const saveCall = calls.find((c) => c.target === 'save');
     expect(saveCall).toBeDefined();
     expect(saveCall!.source).toBe('process_user');
     expect(saveCall!.targetFilePath).toBe('user.py');
   });
 
-  it('detects User class and save function (Python methods are Function nodes)', () => {
+  it('classifies regular and dunder class-body functions as Method nodes', () => {
     expect(getNodesByLabel(result, 'Class')).toContain('User');
-    // Python tree-sitter captures all function_definitions as Function, including methods
-    expect(getNodesByLabel(result, 'Function')).toContain('save');
+    expect(getNodesByLabel(result, 'Method')).toEqual(
+      expect.arrayContaining(['save', '__getitem__']),
+    );
+    expect(getNodesByLabel(result, 'Function')).not.toContain('save');
+    expect(getNodesByLabel(result, 'Function')).not.toContain('__getitem__');
   });
 });
 
@@ -163,27 +176,23 @@ describe('Python receiver-constrained resolution', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-receiver-resolution'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-receiver-resolution'), () => {});
   }, 60000);
 
-  it('detects User and Repo classes, both with save functions', () => {
+  it('detects User and Repo classes, both with save methods', () => {
     expect(getNodesByLabel(result, 'Class')).toContain('User');
     expect(getNodesByLabel(result, 'Class')).toContain('Repo');
-    // Python tree-sitter captures all function_definitions as Function
-    const saveFns = getNodesByLabel(result, 'Function').filter(m => m === 'save');
+    const saveFns = getNodesByLabel(result, 'Method').filter((m) => m === 'save');
     expect(saveFns.length).toBe(2);
   });
 
   it('resolves user.save() to User.save and repo.save() to Repo.save via receiver typing', () => {
     const calls = getRelationships(result, 'CALLS');
-    const saveCalls = calls.filter(c => c.target === 'save');
+    const saveCalls = calls.filter((c) => c.target === 'save');
     expect(saveCalls.length).toBe(2);
 
-    const userSave = saveCalls.find(c => c.targetFilePath === 'user.py');
-    const repoSave = saveCalls.find(c => c.targetFilePath === 'repo.py');
+    const userSave = saveCalls.find((c) => c.targetFilePath === 'user.py');
+    const repoSave = saveCalls.find((c) => c.targetFilePath === 'repo.py');
 
     expect(userSave).toBeDefined();
     expect(repoSave).toBeDefined();
@@ -200,15 +209,12 @@ describe('Python named import disambiguation', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-named-imports'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-named-imports'), () => {});
   }, 60000);
 
   it('resolves process_input → format_data to format_upper.py via from-import', () => {
     const calls = getRelationships(result, 'CALLS');
-    const formatCall = calls.find(c => c.target === 'format_data');
+    const formatCall = calls.find((c) => c.target === 'format_data');
     expect(formatCall).toBeDefined();
     expect(formatCall!.source).toBe('process_input');
     expect(formatCall!.targetFilePath).toBe('format_upper.py');
@@ -216,7 +222,7 @@ describe('Python named import disambiguation', () => {
 
   it('emits IMPORTS edge to format_upper.py', () => {
     const imports = getRelationships(result, 'IMPORTS');
-    const appImport = imports.find(e => e.source === 'app.py');
+    const appImport = imports.find((e) => e.source === 'app.py');
     expect(appImport).toBeDefined();
     expect(appImport!.targetFilePath).toBe('format_upper.py');
   });
@@ -230,15 +236,12 @@ describe('Python variadic call resolution', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-variadic-resolution'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-variadic-resolution'), () => {});
   }, 60000);
 
   it('resolves process_input → log_entry to logger.py despite 3 args vs *args', () => {
     const calls = getRelationships(result, 'CALLS');
-    const logCall = calls.find(c => c.target === 'log_entry');
+    const logCall = calls.find((c) => c.target === 'log_entry');
     expect(logCall).toBeDefined();
     expect(logCall!.source).toBe('process_input');
     expect(logCall!.targetFilePath).toBe('logger.py');
@@ -253,10 +256,7 @@ describe('Python alias import resolution', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-alias-imports'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-alias-imports'), () => {});
   }, 60000);
 
   it('detects User and Repo classes', () => {
@@ -265,8 +265,8 @@ describe('Python alias import resolution', () => {
 
   it('resolves u.save() to models.py and r.persist() to models.py via alias', () => {
     const calls = getRelationships(result, 'CALLS');
-    const saveCall = calls.find(c => c.target === 'save');
-    const persistCall = calls.find(c => c.target === 'persist');
+    const saveCall = calls.find((c) => c.target === 'save');
+    const persistCall = calls.find((c) => c.target === 'persist');
 
     expect(saveCall).toBeDefined();
     expect(saveCall!.source).toBe('main');
@@ -286,6 +286,137 @@ describe('Python alias import resolution', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Plain import alias: import models as m → m.User() resolves to models.py
+// ---------------------------------------------------------------------------
+
+describe('Python plain import alias resolution (import X as Y)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-plain-import-alias'), () => {});
+  }, 60000);
+
+  it('detects User classes in both models.py and auth.py', () => {
+    const classes = getNodesByLabel(result, 'Class');
+    expect(classes).toContain('User');
+    expect(classes).toContain('Repo');
+  });
+
+  it('emits IMPORTS edges: app.py → models.py and app.py → auth.py', () => {
+    const imports = getRelationships(result, 'IMPORTS');
+    const importFiles = imports
+      .filter((i) => i.sourceFilePath === 'app.py')
+      .map((i) => i.targetFilePath)
+      .sort();
+    expect(importFiles).toEqual(['auth.py', 'models.py']);
+  });
+
+  it('resolves m.User() and u.save() to models.py via alias', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCall = calls.find((c) => c.target === 'save' && c.source === 'main');
+    expect(saveCall).toBeDefined();
+    expect(saveCall!.targetFilePath).toBe('models.py');
+  });
+
+  it('resolves m.Repo() and r.persist() to models.py via alias', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const persistCall = calls.find((c) => c.target === 'persist' && c.source === 'main');
+    expect(persistCall).toBeDefined();
+    expect(persistCall!.targetFilePath).toBe('models.py');
+  });
+
+  it('resolves a.User() and v.login() to auth.py via alias (disambiguation)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const loginCall = calls.find((c) => c.target === 'login' && c.source === 'main');
+    expect(loginCall).toBeDefined();
+    expect(loginCall!.targetFilePath).toBe('auth.py');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Same-name collision: import X as alias; alias.func() where caller is also named func
+// Issue #417 — module-alias disambiguation must override same-file tier
+// ---------------------------------------------------------------------------
+
+describe('Python same-name collision via module alias (Issue #417)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-same-name-collision'), () => {});
+  }, 60000);
+
+  it('resolves app_metrics.get_metrics() to metrics.py, not self (same-name collision)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const getMetricsCall = calls.find(
+      (c) => c.source === 'get_metrics' && c.target === 'get_metrics',
+    );
+    expect(getMetricsCall).toBeDefined();
+    // Must resolve to metrics.py, NOT router.py (self-call)
+    expect(getMetricsCall!.sourceFilePath).toBe('router.py');
+    expect(getMetricsCall!.targetFilePath).toBe('metrics.py');
+  });
+
+  it('emits IMPORTS edge: router.py → metrics.py (module alias registered)', () => {
+    const imports = getRelationships(result, 'IMPORTS');
+    const metricsImport = imports.find(
+      (i) => i.sourceFilePath === 'router.py' && i.targetFilePath === 'metrics.py',
+    );
+    expect(metricsImport).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ancestor directory import: Python single-segment import resolved via ancestor walk
+// Issue #417 — prevents cross-language misresolution when suffix matching picks .ts over .py
+// ---------------------------------------------------------------------------
+
+describe('Python ancestor directory import resolution (Issue #417)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-ancestor-import'), () => {});
+  }, 60000);
+
+  it('resolves from middleware import to backend/middleware.py, not frontend/middleware.ts', () => {
+    const imports = getRelationships(result, 'IMPORTS');
+    const middlewareImport = imports.find(
+      (i) =>
+        i.sourceFilePath === 'backend/services/auth.py' && i.targetFilePath.includes('middleware'),
+    );
+    expect(middlewareImport).toBeDefined();
+    expect(middlewareImport!.targetFilePath).toBe('backend/middleware.py');
+  });
+
+  it('resolves _canonical() call to middleware.py:get_remaining_slots via alias', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const canonicalCall = calls.find(
+      (c) => c.source === 'get_remaining_slots' && c.sourceFilePath === 'backend/services/auth.py',
+    );
+    expect(canonicalCall).toBeDefined();
+    expect(canonicalCall!.target).toBe('get_remaining_slots');
+    expect(canonicalCall!.targetFilePath).toBe('backend/middleware.py');
+  });
+
+  it('resolves depth-2 ancestor import: a/b/c/deep.py → a/utils.py (not suffix match)', () => {
+    const imports = getRelationships(result, 'IMPORTS');
+    const utilsImport = imports.find(
+      (i) => i.sourceFilePath === 'a/b/c/deep.py' && i.targetFilePath.includes('utils'),
+    );
+    expect(utilsImport).toBeDefined();
+    expect(utilsImport!.targetFilePath).toBe('a/utils.py');
+  });
+
+  it('resolves format_currency() call across depth-2 ancestor import', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const fmtCall = calls.find(
+      (c) => c.source === 'render_price' && c.target === 'format_currency',
+    );
+    expect(fmtCall).toBeDefined();
+    expect(fmtCall!.targetFilePath).toBe('a/utils.py');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Re-export chain: from .base import X barrel pattern via __init__.py
 // ---------------------------------------------------------------------------
 
@@ -293,15 +424,12 @@ describe('Python re-export chain resolution', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-reexport-chain'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-reexport-chain'), () => {});
   }, 60000);
 
   it('resolves user.save() through __init__.py barrel to models/base.py', () => {
     const calls = getRelationships(result, 'CALLS');
-    const saveCall = calls.find(c => c.target === 'save');
+    const saveCall = calls.find((c) => c.target === 'save');
     expect(saveCall).toBeDefined();
     expect(saveCall!.source).toBe('main');
     expect(saveCall!.targetFilePath).toBe('models/base.py');
@@ -309,7 +437,7 @@ describe('Python re-export chain resolution', () => {
 
   it('resolves repo.persist() through __init__.py barrel to models/base.py', () => {
     const calls = getRelationships(result, 'CALLS');
-    const persistCall = calls.find(c => c.target === 'persist');
+    const persistCall = calls.find((c) => c.target === 'persist');
     expect(persistCall).toBeDefined();
     expect(persistCall!.source).toBe('main');
     expect(persistCall!.targetFilePath).toBe('models/base.py');
@@ -324,15 +452,12 @@ describe('Python local definition shadows import', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-local-shadow'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-local-shadow'), () => {});
   }, 60000);
 
   it('resolves save("test") to local save in app.py, not utils.py', () => {
     const calls = getRelationships(result, 'CALLS');
-    const saveCall = calls.find(c => c.target === 'save' && c.source === 'main');
+    const saveCall = calls.find((c) => c.target === 'save' && c.source === 'main');
     expect(saveCall).toBeDefined();
     expect(saveCall!.targetFilePath).toBe('app.py');
   });
@@ -347,10 +472,7 @@ describe('Python bare import resolution (proximity over index order)', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-bare-import'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-bare-import'), () => {});
   }, 60000);
 
   it('detects User in models/ and UserService in services/', () => {
@@ -360,7 +482,7 @@ describe('Python bare import resolution (proximity over index order)', () => {
 
   it('resolves `import user` from services/auth.py to services/user.py, not models/user.py', () => {
     const imports = getRelationships(result, 'IMPORTS');
-    const imp = imports.find(e => e.sourceFilePath === 'services/auth.py');
+    const imp = imports.find((e) => e.sourceFilePath === 'services/auth.py');
     expect(imp).toBeDefined();
     expect(imp!.targetFilePath).toBe('services/user.py');
     expect(imp!.targetFilePath).not.toBe('models/user.py');
@@ -370,7 +492,9 @@ describe('Python bare import resolution (proximity over index order)', () => {
     // End-to-end: correct IMPORTS resolution must propagate through type inference
     // so that user.UserService() binds svc → UserService, and svc.execute() resolves
     const calls = getRelationships(result, 'CALLS');
-    const executeCall = calls.find(c => c.target === 'execute' && c.targetFilePath === 'services/user.py');
+    const executeCall = calls.find(
+      (c) => c.target === 'execute' && c.targetFilePath === 'services/user.py',
+    );
     expect(executeCall).toBeDefined();
     expect(executeCall!.source).toBe('authenticate');
   });
@@ -394,27 +518,31 @@ describe('Python constructor-inferred type resolution', () => {
   it('detects User and Repo classes, both with save methods', () => {
     expect(getNodesByLabel(result, 'Class')).toContain('User');
     expect(getNodesByLabel(result, 'Class')).toContain('Repo');
-    const saveFns = getNodesByLabel(result, 'Function').filter(m => m === 'save');
+    const saveFns = getNodesByLabel(result, 'Method').filter((m) => m === 'save');
     expect(saveFns.length).toBe(2);
   });
 
   it('resolves user.save() to models/user.py via constructor-inferred type', () => {
     const calls = getRelationships(result, 'CALLS');
-    const userSave = calls.find(c => c.target === 'save' && c.targetFilePath === 'models/user.py');
+    const userSave = calls.find(
+      (c) => c.target === 'save' && c.targetFilePath === 'models/user.py',
+    );
     expect(userSave).toBeDefined();
     expect(userSave!.source).toBe('process_entities');
   });
 
   it('resolves repo.save() to models/repo.py via constructor-inferred type', () => {
     const calls = getRelationships(result, 'CALLS');
-    const repoSave = calls.find(c => c.target === 'save' && c.targetFilePath === 'models/repo.py');
+    const repoSave = calls.find(
+      (c) => c.target === 'save' && c.targetFilePath === 'models/repo.py',
+    );
     expect(repoSave).toBeDefined();
     expect(repoSave!.source).toBe('process_entities');
   });
 
   it('emits exactly 2 save() CALLS edges (one per receiver type)', () => {
     const calls = getRelationships(result, 'CALLS');
-    const saveCalls = calls.filter(c => c.target === 'save');
+    const saveCalls = calls.filter((c) => c.target === 'save');
     expect(saveCalls.length).toBe(2);
   });
 });
@@ -427,36 +555,32 @@ describe('Python constructor-call resolution', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-constructor-calls'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-constructor-calls'), () => {});
   }, 60000);
 
   it('detects User class with __init__ and save methods', () => {
     expect(getNodesByLabel(result, 'Class')).toContain('User');
-    expect(getNodesByLabel(result, 'Function')).toContain('__init__');
-    expect(getNodesByLabel(result, 'Function')).toContain('save');
+    expect(getNodesByLabel(result, 'Method')).toEqual(expect.arrayContaining(['__init__', 'save']));
     expect(getNodesByLabel(result, 'Function')).toContain('process');
   });
 
   it('resolves import from app.py to models.py', () => {
     const imports = getRelationships(result, 'IMPORTS');
-    const imp = imports.find(e => e.source === 'app.py' && e.targetFilePath === 'models.py');
+    const imp = imports.find((e) => e.source === 'app.py' && e.targetFilePath === 'models.py');
     expect(imp).toBeDefined();
   });
 
   it('emits HAS_METHOD from User class to __init__ and save', () => {
     const hasMethod = getRelationships(result, 'HAS_METHOD');
-    const initEdge = hasMethod.find(e => e.source === 'User' && e.target === '__init__');
-    const saveEdge = hasMethod.find(e => e.source === 'User' && e.target === 'save');
+    const initEdge = hasMethod.find((e) => e.source === 'User' && e.target === '__init__');
+    const saveEdge = hasMethod.find((e) => e.source === 'User' && e.target === 'save');
     expect(initEdge).toBeDefined();
     expect(saveEdge).toBeDefined();
   });
 
   it('resolves user.save() as a method call to models.py', () => {
     const calls = getRelationships(result, 'CALLS');
-    const saveCall = calls.find(c => c.target === 'save');
+    const saveCall = calls.find((c) => c.target === 'save');
     expect(saveCall).toBeDefined();
     expect(saveCall!.source).toBe('process');
     expect(saveCall!.targetFilePath).toBe('models.py');
@@ -477,15 +601,15 @@ describe('Python self resolution', () => {
     );
   }, 60000);
 
-  it('detects User and Repo classes, each with a save function', () => {
+  it('detects User and Repo classes, each with a save method', () => {
     expect(getNodesByLabel(result, 'Class')).toEqual(['Repo', 'User']);
-    const saveFns = getNodesByLabel(result, 'Function').filter(m => m === 'save');
+    const saveFns = getNodesByLabel(result, 'Method').filter((m) => m === 'save');
     expect(saveFns.length).toBe(2);
   });
 
   it('resolves self.save() inside User.process to User.save, not Repo.save', () => {
     const calls = getRelationships(result, 'CALLS');
-    const saveCall = calls.find(c => c.target === 'save' && c.source === 'process');
+    const saveCall = calls.find((c) => c.target === 'save' && c.source === 'process');
     expect(saveCall).toBeDefined();
     expect(saveCall!.targetFilePath).toBe('models/user.py');
   });
@@ -499,10 +623,7 @@ describe('Python parent resolution', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-parent-resolution'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-parent-resolution'), () => {});
   }, 60000);
 
   it('detects BaseModel and User classes', () => {
@@ -532,10 +653,7 @@ describe('Python super resolution', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-super-resolution'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-super-resolution'), () => {});
   }, 60000);
 
   it('detects BaseModel, User, and Repo classes', () => {
@@ -544,10 +662,25 @@ describe('Python super resolution', () => {
 
   it('resolves super().save() inside User to BaseModel.save, not Repo.save', () => {
     const calls = getRelationships(result, 'CALLS');
-    const superSave = calls.find(c => c.source === 'save' && c.target === 'save'
-      && c.targetFilePath === 'models/base.py');
+    const superSave = calls.find(
+      (c) => c.source === 'save' && c.target === 'save' && c.targetFilePath === 'models/base.py',
+    );
     expect(superSave).toBeDefined();
-    const repoSave = calls.find(c => c.target === 'save' && c.targetFilePath === 'models/repo.py');
+    // NOTE: no `rel.reason` assertion here. The legacy DAG classifies
+    // Python `super()` as `'import-resolved'` (the ancestor arrives via
+    // `from base import BaseModel`), while the scope-resolution super-
+    // branch emits the canonical `'global'` (super resolves via MRO,
+    // not through an import directive). That legacy-path asymmetry is
+    // pre-existing (the scope-resolution path previously emitted the
+    // non-standard `'scope-resolution: super-receiver'`) and closing it
+    // requires realigning the legacy tier classifier, which is out of
+    // scope here. The C# `csharp-super-resolution` + `csharp-generic-
+    // parent` suites pin `'global'` because C# legacy also emits
+    // `'global'` for `base` calls, giving us a same-graph guarantee
+    // on at least one migrated language.
+    const repoSave = calls.find(
+      (c) => c.target === 'save' && c.targetFilePath === 'models/repo.py',
+    );
     expect(repoSave).toBeUndefined();
   });
 });
@@ -568,14 +701,14 @@ describe('Python qualified constructor inference', () => {
 
   it('resolves user.save() via qualified constructor (models.User)', () => {
     const calls = getRelationships(result, 'CALLS');
-    const saveCall = calls.find(c => c.target === 'save' && c.targetFilePath === 'models.py');
+    const saveCall = calls.find((c) => c.target === 'save' && c.targetFilePath === 'models.py');
     expect(saveCall).toBeDefined();
     expect(saveCall!.source).toBe('main');
   });
 
   it('resolves user.greet() via qualified constructor (models.User)', () => {
     const calls = getRelationships(result, 'CALLS');
-    const greetCall = calls.find(c => c.target === 'greet' && c.targetFilePath === 'models.py');
+    const greetCall = calls.find((c) => c.target === 'greet' && c.targetFilePath === 'models.py');
     expect(greetCall).toBeDefined();
     expect(greetCall!.source).toBe('main');
   });
@@ -589,21 +722,17 @@ describe('Python walrus operator type inference', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-walrus-operator'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-walrus-operator'), () => {});
   }, 60000);
 
   it('detects User class with save and greet methods', () => {
     expect(getNodesByLabel(result, 'Class')).toContain('User');
-    expect(getNodesByLabel(result, 'Function')).toContain('save');
-    expect(getNodesByLabel(result, 'Function')).toContain('greet');
+    expect(getNodesByLabel(result, 'Method')).toEqual(expect.arrayContaining(['save', 'greet']));
   });
 
   it('resolves user.save() via walrus operator constructor inference', () => {
     const calls = getRelationships(result, 'CALLS');
-    const saveCall = calls.find(c => c.target === 'save' && c.targetFilePath === 'models.py');
+    const saveCall = calls.find((c) => c.target === 'save' && c.targetFilePath === 'models.py');
     expect(saveCall).toBeDefined();
     expect(saveCall!.source).toBe('process');
   });
@@ -617,36 +746,33 @@ describe('Python class-level annotation resolution', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-class-annotations'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-class-annotations'), () => {});
   }, 60000);
 
   it('detects User and Repo classes, both with save methods', () => {
     expect(getNodesByLabel(result, 'Class')).toContain('User');
     expect(getNodesByLabel(result, 'Class')).toContain('Repo');
-    const saveFns = getNodesByLabel(result, 'Function').filter(m => m === 'save');
+    const saveFns = getNodesByLabel(result, 'Method').filter((m) => m === 'save');
     expect(saveFns.length).toBe(2);
   });
 
   it('resolves active_user.save() to User.save via file-level annotation', () => {
     const calls = getRelationships(result, 'CALLS');
-    const userSave = calls.find(c => c.target === 'save' && c.targetFilePath === 'user.py');
+    const userSave = calls.find((c) => c.target === 'save' && c.targetFilePath === 'user.py');
     expect(userSave).toBeDefined();
     expect(userSave!.source).toBe('process');
   });
 
   it('resolves active_repo.save() to Repo.save via file-level annotation', () => {
     const calls = getRelationships(result, 'CALLS');
-    const repoSave = calls.find(c => c.target === 'save' && c.targetFilePath === 'repo.py');
+    const repoSave = calls.find((c) => c.target === 'save' && c.targetFilePath === 'repo.py');
     expect(repoSave).toBeDefined();
     expect(repoSave!.source).toBe('process');
   });
 
   it('emits exactly 2 save() CALLS edges (one per receiver type)', () => {
     const calls = getRelationships(result, 'CALLS');
-    const saveCalls = calls.filter(c => c.target === 'save');
+    const saveCalls = calls.filter((c) => c.target === 'save');
     expect(saveCalls.length).toBe(2);
   });
 });
@@ -672,16 +798,17 @@ describe('Python return type inference', () => {
 
   it('detects get_user and save symbols', () => {
     // Python methods inside classes may be labeled Method or Function depending on nesting
-    const allSymbols = [...getNodesByLabel(result, 'Function'), ...getNodesByLabel(result, 'Method')];
+    const allSymbols = [
+      ...getNodesByLabel(result, 'Function'),
+      ...getNodesByLabel(result, 'Method'),
+    ];
     expect(allSymbols).toContain('get_user');
     expect(allSymbols).toContain('save');
   });
 
   it('resolves user.save() to User#save via return type inference from get_user() -> User', () => {
     const calls = getRelationships(result, 'CALLS');
-    const saveCall = calls.find(c =>
-      c.target === 'save' && c.source === 'process_user'
-    );
+    const saveCall = calls.find((c) => c.target === 'save' && c.source === 'process_user');
     expect(saveCall).toBeDefined();
     expect(saveCall!.targetFilePath).toContain('models.py');
   });
@@ -707,7 +834,10 @@ describe('Python static/classmethod class resolution (issue #289)', () => {
   });
 
   it('detects all static/class methods as symbols', () => {
-    const allSymbols = [...getNodesByLabel(result, 'Function'), ...getNodesByLabel(result, 'Method')];
+    const allSymbols = [
+      ...getNodesByLabel(result, 'Function'),
+      ...getNodesByLabel(result, 'Method'),
+    ];
     expect(allSymbols).toContain('find_user');
     expect(allSymbols).toContain('create_user');
     expect(allSymbols).toContain('from_config');
@@ -719,39 +849,41 @@ describe('Python static/classmethod class resolution (issue #289)', () => {
     // return empty for classes whose methods are all @staticmethod/@classmethod
     const hasMethod = getRelationships(result, 'HAS_METHOD');
 
-    const userServiceMethods = hasMethod.filter(e => e.source === 'UserService');
+    const userServiceMethods = hasMethod.filter((e) => e.source === 'UserService');
     expect(userServiceMethods.length).toBe(3); // find_user, create_user, from_config
 
-    const adminServiceMethods = hasMethod.filter(e => e.source === 'AdminService');
+    const adminServiceMethods = hasMethod.filter((e) => e.source === 'AdminService');
     expect(adminServiceMethods.length).toBe(2); // find_user, delete_user
   });
 
   it('resolves unique static method calls (create_user, delete_user, from_config)', () => {
     const calls = getRelationships(result, 'CALLS');
     // delete_user is unique to AdminService — should resolve
-    const deleteCall = calls.find(c =>
-      c.target === 'delete_user' && c.source === 'process' && c.targetFilePath.includes('service.py'),
+    const deleteCall = calls.find(
+      (c) =>
+        c.target === 'delete_user' &&
+        c.source === 'process' &&
+        c.targetFilePath.includes('service.py'),
     );
     expect(deleteCall).toBeDefined();
 
     // create_user is unique to UserService — should resolve
-    const createCall = calls.find(c =>
-      c.target === 'create_user' && c.source === 'process' && c.targetFilePath.includes('service.py'),
+    const createCall = calls.find(
+      (c) =>
+        c.target === 'create_user' &&
+        c.source === 'process' &&
+        c.targetFilePath.includes('service.py'),
     );
     expect(createCall).toBeDefined();
   });
 
   it('resolves find_user() via class-as-receiver for static method calls', () => {
-    // UserService.find_user() and AdminService.find_user() are both resolved because
-    // the class name (UserService / AdminService) is used as the receiver type for
-    // disambiguation. Both find_user methods share the same nodeId (same file, same name)
-    // so exactly 1 CALLS edge is emitted — which is correct (not ambiguous, not missing).
+    // With qualified IDs, UserService.find_user and AdminService.find_user are distinct
+    // nodes — so both CALLS edges are correctly emitted (no ID collision).
     const calls = getRelationships(result, 'CALLS');
-    const findCalls = calls.filter(c =>
-      c.target === 'find_user' && c.source === 'process',
-    );
-    expect(findCalls.length).toBe(1);
-    expect(findCalls[0].targetFilePath).toContain('service.py');
+    const findCalls = calls.filter((c) => c.target === 'find_user' && c.source === 'process');
+    expect(findCalls.length).toBe(2);
+    expect(findCalls.every((c) => c.targetFilePath.includes('service.py'))).toBe(true);
   });
 });
 
@@ -764,39 +896,36 @@ describe('Python nullable receiver resolution', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-nullable-receiver'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-nullable-receiver'), () => {});
   }, 60000);
 
-  it('detects User and Repo classes, both with save functions', () => {
+  it('detects User and Repo classes, both with save methods', () => {
     expect(getNodesByLabel(result, 'Class')).toContain('User');
     expect(getNodesByLabel(result, 'Class')).toContain('Repo');
-    const saveFns = getNodesByLabel(result, 'Function').filter(m => m === 'save');
+    const saveFns = getNodesByLabel(result, 'Method').filter((m) => m === 'save');
     expect(saveFns.length).toBe(2);
   });
 
   it('resolves user.save() to User.save via nullable receiver typing', () => {
     const calls = getRelationships(result, 'CALLS');
-    const userSave = calls.find(c => c.target === 'save' && c.targetFilePath === 'user.py');
+    const userSave = calls.find((c) => c.target === 'save' && c.targetFilePath === 'user.py');
     expect(userSave).toBeDefined();
     expect(userSave!.source).toBe('process_entities');
   });
 
   it('resolves repo.save() to Repo.save via nullable receiver typing', () => {
     const calls = getRelationships(result, 'CALLS');
-    const repoSave = calls.find(c => c.target === 'save' && c.targetFilePath === 'repo.py');
+    const repoSave = calls.find((c) => c.target === 'save' && c.targetFilePath === 'repo.py');
     expect(repoSave).toBeDefined();
     expect(repoSave!.source).toBe('process_entities');
   });
 
   it('user.save() does NOT resolve to Repo.save (negative disambiguation)', () => {
     const calls = getRelationships(result, 'CALLS');
-    const saveCalls = calls.filter(c => c.target === 'save' && c.source === 'process_entities');
+    const saveCalls = calls.filter((c) => c.target === 'save' && c.source === 'process_entities');
     // Each save() call should resolve to exactly one target file
-    const userSaveToRepo = saveCalls.filter(c => c.targetFilePath === 'repo.py');
-    const repoSaveToUser = saveCalls.filter(c => c.targetFilePath === 'user.py');
+    const userSaveToRepo = saveCalls.filter((c) => c.targetFilePath === 'repo.py');
+    const repoSaveToUser = saveCalls.filter((c) => c.targetFilePath === 'user.py');
     // Exactly 1 edge to each file (not 2 to either)
     expect(userSaveToRepo.length).toBe(1);
     expect(repoSaveToUser.length).toBe(1);
@@ -804,7 +933,7 @@ describe('Python nullable receiver resolution', () => {
 
   it('emits exactly 2 save() CALLS edges (one per receiver type)', () => {
     const calls = getRelationships(result, 'CALLS');
-    const saveCalls = calls.filter(c => c.target === 'save');
+    const saveCalls = calls.filter((c) => c.target === 'save');
     expect(saveCalls.length).toBe(2);
   });
 });
@@ -817,24 +946,21 @@ describe('Python assignment chain propagation', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-assignment-chain'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-assignment-chain'), () => {});
   }, 60000);
 
   it('detects User and Repo classes each with a save method', () => {
     expect(getNodesByLabel(result, 'Class')).toContain('User');
     expect(getNodesByLabel(result, 'Class')).toContain('Repo');
-    const saveFns = getNodesByLabel(result, 'Function').filter(m => m === 'save');
+    const saveFns = getNodesByLabel(result, 'Method').filter((m) => m === 'save');
     expect(saveFns.length).toBe(2);
   });
 
   it('resolves alias.save() to User#save via assignment chain', () => {
     const calls = getRelationships(result, 'CALLS');
     // Positive: alias.save() must resolve to User#save
-    const userSave = calls.find(c =>
-      c.target === 'save' && c.source === 'process' && c.targetFilePath.includes('user.py'),
+    const userSave = calls.find(
+      (c) => c.target === 'save' && c.source === 'process' && c.targetFilePath.includes('user.py'),
     );
     expect(userSave).toBeDefined();
   });
@@ -842,8 +968,8 @@ describe('Python assignment chain propagation', () => {
   it('alias.save() does NOT resolve to Repo#save', () => {
     const calls = getRelationships(result, 'CALLS');
     // Negative: only one save call from process to User#save
-    const wrongCall = calls.filter(c =>
-      c.target === 'save' && c.source === 'process' && c.targetFilePath.includes('user.py'),
+    const wrongCall = calls.filter(
+      (c) => c.target === 'save' && c.source === 'process' && c.targetFilePath.includes('user.py'),
     );
     expect(wrongCall.length).toBe(1);
   });
@@ -851,19 +977,19 @@ describe('Python assignment chain propagation', () => {
   it('resolves r_alias.save() to Repo#save via assignment chain', () => {
     const calls = getRelationships(result, 'CALLS');
     // Positive: r_alias.save() must resolve to Repo#save
-    const repoSave = calls.find(c =>
-      c.target === 'save' && c.source === 'process' && c.targetFilePath.includes('repo.py'),
+    const repoSave = calls.find(
+      (c) => c.target === 'save' && c.source === 'process' && c.targetFilePath.includes('repo.py'),
     );
     expect(repoSave).toBeDefined();
   });
 
   it('each alias resolves to its own class, not the other', () => {
     const calls = getRelationships(result, 'CALLS');
-    const userSave = calls.find(c =>
-      c.target === 'save' && c.source === 'process' && c.targetFilePath.includes('user.py'),
+    const userSave = calls.find(
+      (c) => c.target === 'save' && c.source === 'process' && c.targetFilePath.includes('user.py'),
     );
-    const repoSave = calls.find(c =>
-      c.target === 'save' && c.source === 'process' && c.targetFilePath.includes('repo.py'),
+    const repoSave = calls.find(
+      (c) => c.target === 'save' && c.source === 'process' && c.targetFilePath.includes('repo.py'),
     );
     expect(userSave).toBeDefined();
     expect(repoSave).toBeDefined();
@@ -882,47 +1008,56 @@ describe('Python nullable (User | None) + assignment chain combined', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-nullable-chain'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-nullable-chain'), () => {});
   }, 60000);
 
   it('detects User and Repo classes each with a save method', () => {
     expect(getNodesByLabel(result, 'Class')).toContain('User');
     expect(getNodesByLabel(result, 'Class')).toContain('Repo');
-    const saveFns = getNodesByLabel(result, 'Function').filter(m => m === 'save');
+    const saveFns = getNodesByLabel(result, 'Method').filter((m) => m === 'save');
     expect(saveFns.length).toBe(2);
   });
 
   it('resolves alias.save() to User#save when source is User | None', () => {
     const calls = getRelationships(result, 'CALLS');
-    const userSave = calls.find(c =>
-      c.target === 'save' && c.source === 'nullable_chain_user' && c.targetFilePath?.includes('user.py'),
+    const userSave = calls.find(
+      (c) =>
+        c.target === 'save' &&
+        c.source === 'nullable_chain_user' &&
+        c.targetFilePath?.includes('user.py'),
     );
     expect(userSave).toBeDefined();
   });
 
   it('alias.save() from User | None does NOT resolve to Repo#save (negative)', () => {
     const calls = getRelationships(result, 'CALLS');
-    const wrongCall = calls.find(c =>
-      c.target === 'save' && c.source === 'nullable_chain_user' && c.targetFilePath?.includes('repo.py'),
+    const wrongCall = calls.find(
+      (c) =>
+        c.target === 'save' &&
+        c.source === 'nullable_chain_user' &&
+        c.targetFilePath?.includes('repo.py'),
     );
     expect(wrongCall).toBeUndefined();
   });
 
   it('resolves alias.save() to Repo#save when source is Repo | None', () => {
     const calls = getRelationships(result, 'CALLS');
-    const repoSave = calls.find(c =>
-      c.target === 'save' && c.source === 'nullable_chain_repo' && c.targetFilePath?.includes('repo.py'),
+    const repoSave = calls.find(
+      (c) =>
+        c.target === 'save' &&
+        c.source === 'nullable_chain_repo' &&
+        c.targetFilePath?.includes('repo.py'),
     );
     expect(repoSave).toBeDefined();
   });
 
   it('alias.save() from Repo | None does NOT resolve to User#save (negative)', () => {
     const calls = getRelationships(result, 'CALLS');
-    const wrongCall = calls.find(c =>
-      c.target === 'save' && c.source === 'nullable_chain_repo' && c.targetFilePath?.includes('user.py'),
+    const wrongCall = calls.find(
+      (c) =>
+        c.target === 'save' &&
+        c.source === 'nullable_chain_repo' &&
+        c.targetFilePath?.includes('user.py'),
     );
     expect(wrongCall).toBeUndefined();
   });
@@ -938,47 +1073,56 @@ describe('Python walrus operator (:=) assignment chain', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-walrus-chain'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-walrus-chain'), () => {});
   }, 60000);
 
-  it('detects User and Repo classes each with a save function', () => {
+  it('detects User and Repo classes each with a save method', () => {
     expect(getNodesByLabel(result, 'Class')).toContain('User');
     expect(getNodesByLabel(result, 'Class')).toContain('Repo');
-    const saveFns = getNodesByLabel(result, 'Function').filter(m => m === 'save');
+    const saveFns = getNodesByLabel(result, 'Method').filter((m) => m === 'save');
     expect(saveFns.length).toBe(2);
   });
 
   it('resolves alias.save() to User#save via regular + walrus chains', () => {
     const calls = getRelationships(result, 'CALLS');
-    const userSave = calls.find(c =>
-      c.target === 'save' && c.source === 'walrus_chain_user' && c.targetFilePath?.includes('user.py'),
+    const userSave = calls.find(
+      (c) =>
+        c.target === 'save' &&
+        c.source === 'walrus_chain_user' &&
+        c.targetFilePath?.includes('user.py'),
     );
     expect(userSave).toBeDefined();
   });
 
   it('save() in walrus_chain_user does NOT resolve to Repo#save (negative)', () => {
     const calls = getRelationships(result, 'CALLS');
-    const wrongCall = calls.find(c =>
-      c.target === 'save' && c.source === 'walrus_chain_user' && c.targetFilePath?.includes('repo.py'),
+    const wrongCall = calls.find(
+      (c) =>
+        c.target === 'save' &&
+        c.source === 'walrus_chain_user' &&
+        c.targetFilePath?.includes('repo.py'),
     );
     expect(wrongCall).toBeUndefined();
   });
 
   it('resolves alias.save() to Repo#save via regular + walrus chains', () => {
     const calls = getRelationships(result, 'CALLS');
-    const repoSave = calls.find(c =>
-      c.target === 'save' && c.source === 'walrus_chain_repo' && c.targetFilePath?.includes('repo.py'),
+    const repoSave = calls.find(
+      (c) =>
+        c.target === 'save' &&
+        c.source === 'walrus_chain_repo' &&
+        c.targetFilePath?.includes('repo.py'),
     );
     expect(repoSave).toBeDefined();
   });
 
   it('save() in walrus_chain_repo does NOT resolve to User#save (negative)', () => {
     const calls = getRelationships(result, 'CALLS');
-    const wrongCall = calls.find(c =>
-      c.target === 'save' && c.source === 'walrus_chain_repo' && c.targetFilePath?.includes('user.py'),
+    const wrongCall = calls.find(
+      (c) =>
+        c.target === 'save' &&
+        c.source === 'walrus_chain_repo' &&
+        c.targetFilePath?.includes('user.py'),
     );
     expect(wrongCall).toBeUndefined();
   });
@@ -993,49 +1137,28 @@ describe('Python match/case as-pattern type binding', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-match-case'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-match-case'), () => {});
   }, 60000);
 
   it('detects User and Repo classes each with a save method', () => {
     expect(getNodesByLabel(result, 'Class')).toContain('User');
     expect(getNodesByLabel(result, 'Class')).toContain('Repo');
-    const saveFns = getNodesByLabel(result, 'Function').filter(m => m === 'save');
+    const saveFns = getNodesByLabel(result, 'Method').filter((m) => m === 'save');
     expect(saveFns.length).toBe(2);
   });
 
-  it('DEBUG: shows pipeline result details', () => {
+  it('resolves u.save() to User#save via match/case as-pattern binding', () => {
     const calls = getRelationships(result, 'CALLS');
-    console.log('ALL CALLS:', JSON.stringify(calls.map(c => ({ source: c.source, target: c.target, targetFilePath: c.targetFilePath }))));
-    // Check all relationships
-    const allRels: string[] = [];
-    result.graph.iterRelationships && [...result.graph.iterRelationships()].forEach(r => {
-      const src = result.graph.getNode(r.sourceId);
-      const tgt = result.graph.getNode(r.targetId);
-      allRels.push(r.type + ': ' + src?.properties.name + ' -> ' + tgt?.properties.name);
-    });
-    console.log('ALL RELATIONSHIPS:', allRels.join(', '));
-    expect(true).toBe(true);
-  });
-
-  // Skip: call extraction issue, NOT a type-env limitation.
-  // Type-env binding works correctly (unit test passes). The root cause is likely
-  // in call-processor's findEnclosingFunction scope resolution within match_statement
-  // blocks, not the tree-sitter query patterns (which descend recursively by default).
-  it.skip('resolves u.save() to User#save via match/case as-pattern binding', () => {
-    const calls = getRelationships(result, 'CALLS');
-    const userSave = calls.find(c =>
-      c.target === 'save' && c.source === 'process' && c.targetFilePath?.includes('user.py'),
+    const userSave = calls.find(
+      (c) => c.target === 'save' && c.source === 'process' && c.targetFilePath?.includes('user.py'),
     );
     expect(userSave).toBeDefined();
   });
 
-  it.skip('does NOT resolve u.save() to Repo#save (negative disambiguation)', () => {
+  it('does NOT resolve u.save() to Repo#save (negative disambiguation)', () => {
     const calls = getRelationships(result, 'CALLS');
-    const wrongSave = calls.find(c =>
-      c.target === 'save' && c.source === 'process' && c.targetFilePath?.includes('repo.py'),
+    const wrongSave = calls.find(
+      (c) => c.target === 'save' && c.source === 'process' && c.targetFilePath?.includes('repo.py'),
     );
     expect(wrongSave).toBeUndefined();
   });
@@ -1051,10 +1174,7 @@ describe('Python chained method call resolution', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-chain-call'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-chain-call'), () => {});
   }, 60000);
 
   it('detects User, Repo, and UserService classes', () => {
@@ -1065,27 +1185,28 @@ describe('Python chained method call resolution', () => {
   });
 
   it('detects get_user and save functions', () => {
-    const allSymbols = [...getNodesByLabel(result, 'Function'), ...getNodesByLabel(result, 'Method')];
+    const allSymbols = [
+      ...getNodesByLabel(result, 'Function'),
+      ...getNodesByLabel(result, 'Method'),
+    ];
     expect(allSymbols).toContain('get_user');
     expect(allSymbols).toContain('save');
   });
 
   it('resolves svc.get_user().save() to User#save via chain resolution', () => {
     const calls = getRelationships(result, 'CALLS');
-    const userSave = calls.find(c =>
-      c.target === 'save' &&
-      c.source === 'process_user' &&
-      c.targetFilePath?.includes('user.py'),
+    const userSave = calls.find(
+      (c) =>
+        c.target === 'save' && c.source === 'process_user' && c.targetFilePath?.includes('user.py'),
     );
     expect(userSave).toBeDefined();
   });
 
   it('does NOT resolve svc.get_user().save() to Repo#save', () => {
     const calls = getRelationships(result, 'CALLS');
-    const repoSave = calls.find(c =>
-      c.target === 'save' &&
-      c.source === 'process_user' &&
-      c.targetFilePath?.includes('repo.py'),
+    const repoSave = calls.find(
+      (c) =>
+        c.target === 'save' && c.source === 'process_user' && c.targetFilePath?.includes('repo.py'),
     );
     expect(repoSave).toBeUndefined();
   });
@@ -1099,10 +1220,7 @@ describe('Python dict.items() for-loop resolution', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-dict-items-loop'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-dict-items-loop'), () => {});
   }, 60000);
 
   it('detects User class with save method', () => {
@@ -1111,16 +1229,16 @@ describe('Python dict.items() for-loop resolution', () => {
 
   it('resolves user.save() via dict.items() loop to User#save', () => {
     const calls = getRelationships(result, 'CALLS');
-    const userSave = calls.find(c =>
-      c.target === 'save' && c.source === 'process' && c.targetFilePath?.includes('user.py'),
+    const userSave = calls.find(
+      (c) => c.target === 'save' && c.source === 'process' && c.targetFilePath?.includes('user.py'),
     );
     expect(userSave).toBeDefined();
   });
 
   it('does NOT resolve user.save() to Repo#save (negative)', () => {
     const calls = getRelationships(result, 'CALLS');
-    const wrongSave = calls.find(c =>
-      c.target === 'save' && c.source === 'process' && c.targetFilePath?.includes('repo.py'),
+    const wrongSave = calls.find(
+      (c) => c.target === 'save' && c.source === 'process' && c.targetFilePath?.includes('repo.py'),
     );
     expect(wrongSave).toBeUndefined();
   });
@@ -1143,30 +1261,38 @@ describe('Python member access iterable for-loop', () => {
   it('detects User and Repo classes with save methods', () => {
     expect(getNodesByLabel(result, 'Class')).toContain('User');
     expect(getNodesByLabel(result, 'Class')).toContain('Repo');
-    // Python tree-sitter captures all function_definitions as Function, including methods
-    expect(getNodesByLabel(result, 'Function')).toContain('save');
+    expect(getNodesByLabel(result, 'Method')).toContain('save');
   });
 
   it('resolves user.save() via self.users to User#save', () => {
     const calls = getRelationships(result, 'CALLS');
-    const userSave = calls.find(c =>
-      c.target === 'save' && c.source === 'process_users' && c.targetFilePath?.includes('user.py'),
+    const userSave = calls.find(
+      (c) =>
+        c.target === 'save' &&
+        c.source === 'process_users' &&
+        c.targetFilePath?.includes('user.py'),
     );
     expect(userSave).toBeDefined();
   });
 
   it('does NOT cross-resolve user.save() to Repo#save', () => {
     const calls = getRelationships(result, 'CALLS');
-    const wrong = calls.find(c =>
-      c.target === 'save' && c.source === 'process_users' && c.targetFilePath?.includes('repo.py'),
+    const wrong = calls.find(
+      (c) =>
+        c.target === 'save' &&
+        c.source === 'process_users' &&
+        c.targetFilePath?.includes('repo.py'),
     );
     expect(wrong).toBeUndefined();
   });
 
   it('resolves repo.save() via self.repos to Repo#save', () => {
     const calls = getRelationships(result, 'CALLS');
-    const repoSave = calls.find(c =>
-      c.target === 'save' && c.source === 'process_repos' && c.targetFilePath?.includes('repo.py'),
+    const repoSave = calls.find(
+      (c) =>
+        c.target === 'save' &&
+        c.source === 'process_repos' &&
+        c.targetFilePath?.includes('repo.py'),
     );
     expect(repoSave).toBeDefined();
   });
@@ -1181,10 +1307,7 @@ describe('Python for-loop call_expression iterable resolution (Phase 7.3)', () =
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-for-call-expr'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-for-call-expr'), () => {});
   }, 60000);
 
   it('detects User and Repo classes with competing save methods', () => {
@@ -1194,33 +1317,35 @@ describe('Python for-loop call_expression iterable resolution (Phase 7.3)', () =
 
   it('resolves user.save() in for-loop over get_users() to User#save', () => {
     const calls = getRelationships(result, 'CALLS');
-    const userSave = calls.find(c =>
-      c.target === 'save' && c.source === 'process_users' && c.targetFilePath?.includes('models.py'),
+    const userSave = calls.find(
+      (c) =>
+        c.target === 'save' &&
+        c.source === 'process_users' &&
+        c.targetFilePath?.includes('models.py'),
     );
     expect(userSave).toBeDefined();
   });
 
   it('resolves repo.save() in for-loop over get_repos() to Repo#save', () => {
     const calls = getRelationships(result, 'CALLS');
-    const repoSave = calls.find(c =>
-      c.target === 'save' && c.source === 'process_repos' && c.targetFilePath?.includes('models.py'),
+    const repoSave = calls.find(
+      (c) =>
+        c.target === 'save' &&
+        c.source === 'process_repos' &&
+        c.targetFilePath?.includes('models.py'),
     );
     expect(repoSave).toBeDefined();
   });
 
   it('process_users resolves exactly one save call (no cross-binding)', () => {
     const calls = getRelationships(result, 'CALLS');
-    const saveCalls = calls.filter(c =>
-      c.target === 'save' && c.source === 'process_users',
-    );
+    const saveCalls = calls.filter((c) => c.target === 'save' && c.source === 'process_users');
     expect(saveCalls.length).toBe(1);
   });
 
   it('process_repos resolves exactly one save call (no cross-binding)', () => {
     const calls = getRelationships(result, 'CALLS');
-    const saveCalls = calls.filter(c =>
-      c.target === 'save' && c.source === 'process_repos',
-    );
+    const saveCalls = calls.filter((c) => c.target === 'save' && c.source === 'process_repos');
     expect(saveCalls.length).toBe(1);
   });
 });
@@ -1233,10 +1358,7 @@ describe('Python enumerate() for-loop resolution', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-enumerate-loop'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-enumerate-loop'), () => {});
   }, 60000);
 
   it('detects User class with save method', () => {
@@ -1248,8 +1370,11 @@ describe('Python enumerate() for-loop resolution', () => {
     // v must bind to User (value type of dict[str, User]).
     // Without enumerate() support, v is unbound → resolver emits 0 CALLS.
     const calls = getRelationships(result, 'CALLS');
-    const userSave = calls.find(c =>
-      c.target === 'save' && c.source === 'process_users' && c.targetFilePath?.includes('user.py'),
+    const userSave = calls.find(
+      (c) =>
+        c.target === 'save' &&
+        c.source === 'process_users' &&
+        c.targetFilePath?.includes('user.py'),
     );
     expect(userSave).toBeDefined();
   });
@@ -1257,8 +1382,11 @@ describe('Python enumerate() for-loop resolution', () => {
   it('does NOT resolve v.save() to a non-User target', () => {
     // i is the int index from enumerate — must not produce a spurious CALLS edge
     const calls = getRelationships(result, 'CALLS');
-    const wrongSave = calls.find(c =>
-      c.target === 'save' && c.source === 'process_users' && !c.targetFilePath?.includes('user.py'),
+    const wrongSave = calls.find(
+      (c) =>
+        c.target === 'save' &&
+        c.source === 'process_users' &&
+        !c.targetFilePath?.includes('user.py'),
     );
     expect(wrongSave).toBeUndefined();
   });
@@ -1266,8 +1394,11 @@ describe('Python enumerate() for-loop resolution', () => {
   it('resolves nested tuple pattern: for i, (k, v) in enumerate(d.items())', () => {
     // Nested tuple_pattern inside pattern_list — must descend to find v
     const calls = getRelationships(result, 'CALLS');
-    const userSave = calls.find(c =>
-      c.target === 'save' && c.source === 'process_nested_tuple' && c.targetFilePath?.includes('user.py'),
+    const userSave = calls.find(
+      (c) =>
+        c.target === 'save' &&
+        c.source === 'process_nested_tuple' &&
+        c.targetFilePath?.includes('user.py'),
     );
     expect(userSave).toBeDefined();
   });
@@ -1275,8 +1406,11 @@ describe('Python enumerate() for-loop resolution', () => {
   it('resolves parenthesized tuple: for (i, u) in enumerate(users)', () => {
     // tuple_pattern as top-level left node (not pattern_list)
     const calls = getRelationships(result, 'CALLS');
-    const userSave = calls.find(c =>
-      c.target === 'save' && c.source === 'process_parenthesized_tuple' && c.targetFilePath?.includes('user.py'),
+    const userSave = calls.find(
+      (c) =>
+        c.target === 'save' &&
+        c.source === 'process_parenthesized_tuple' &&
+        c.targetFilePath?.includes('user.py'),
     );
     expect(userSave).toBeDefined();
   });
@@ -1290,10 +1424,7 @@ describe('Field type resolution (Python)', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-field-types'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-field-types'), () => {});
   }, 60000);
 
   it('detects classes: Address, User', () => {
@@ -1317,11 +1448,28 @@ describe('Field type resolution (Python)', () => {
 
   it('resolves user.address.save() → Address#save via field type', () => {
     const calls = getRelationships(result, 'CALLS');
-    const saveCalls = calls.filter(e => e.target === 'save');
+    const saveCalls = calls.filter((e) => e.target === 'save');
     const addressSave = saveCalls.find(
-      e => e.source === 'process_user' && e.targetFilePath.includes('models'),
+      (e) => e.source === 'process_user' && e.targetFilePath.includes('models'),
     );
     expect(addressSave).toBeDefined();
+  });
+
+  it('populates field metadata (visibility, isStatic, isReadonly) on Property nodes', () => {
+    const properties = getNodesByLabelFull(result, 'Property');
+
+    const city = properties.find((p) => p.name === 'city');
+    expect(city).toBeDefined();
+    expect(city!.properties.visibility).toBe('public');
+    expect(city!.properties.isStatic).toBe(false);
+    expect(city!.properties.isReadonly).toBe(false);
+    expect(city!.properties.declaredType).toBe('str');
+
+    const addr = properties.find((p) => p.name === 'address');
+    expect(addr).toBeDefined();
+    expect(addr!.properties.visibility).toBe('public');
+    expect(addr!.properties.isStatic).toBe(false);
+    expect(addr!.properties.declaredType).toBe('Address');
   });
 });
 
@@ -1333,23 +1481,18 @@ describe('Field type disambiguation (Python)', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-field-type-disambig'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-field-type-disambig'), () => {});
   }, 60000);
 
   it('detects both User#save and Address#save', () => {
-    const methods = getNodesByLabel(result, 'Function');
-    const saveMethods = methods.filter(m => m === 'save');
+    const methods = getNodesByLabel(result, 'Method');
+    const saveMethods = methods.filter((m) => m === 'save');
     expect(saveMethods.length).toBe(2);
   });
 
   it('resolves user.address.save() → Address#save (not User#save)', () => {
     const calls = getRelationships(result, 'CALLS');
-    const saveCalls = calls.filter(
-      e => e.target === 'save' && e.source === 'process_user',
-    );
+    const saveCalls = calls.filter((e) => e.target === 'save' && e.source === 'process_user');
     expect(saveCalls.length).toBe(1);
     expect(saveCalls[0].targetFilePath).toContain('address');
     expect(saveCalls[0].targetFilePath).not.toContain('user');
@@ -1364,21 +1507,1048 @@ describe('Write access tracking (Python)', () => {
   let result: PipelineResult;
 
   beforeAll(async () => {
-    result = await runPipelineFromRepo(
-      path.join(FIXTURES, 'python-write-access'),
-      () => {},
-    );
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-write-access'), () => {});
   }, 60000);
 
   it('emits ACCESSES write edges for attribute assignments', () => {
     const accesses = getRelationships(result, 'ACCESSES');
-    const writes = accesses.filter(e => e.rel.reason === 'write');
+    const writes = accesses.filter((e) => e.rel.reason === 'write');
     expect(writes.length).toBe(2);
-    const nameWrite = writes.find(e => e.target === 'name');
-    const addressWrite = writes.find(e => e.target === 'address');
+    const nameWrite = writes.find((e) => e.target === 'name');
+    const addressWrite = writes.find((e) => e.target === 'address');
     expect(nameWrite).toBeDefined();
     expect(nameWrite!.source).toBe('update_user');
     expect(addressWrite).toBeDefined();
     expect(addressWrite!.source).toBe('update_user');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Call-result variable binding (Phase 9): user = get_user(); user.save()
+// ---------------------------------------------------------------------------
+
+describe('Python call-result variable binding (Tier 2b)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-call-result-binding'), () => {});
+  }, 60000);
+
+  it('resolves user.save() to User#save via call-result binding', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCall = calls.find(
+      (c) =>
+        c.target === 'save' && c.source === 'process_user' && c.targetFilePath.includes('models'),
+    );
+    expect(saveCall).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Method chain binding (Phase 9C): get_user() → .get_city() → .save()
+// ---------------------------------------------------------------------------
+
+describe('Python method chain binding via unified fixpoint (Phase 9C)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'python-method-chain-binding'),
+      () => {},
+    );
+  }, 60000);
+
+  it('resolves city.save() to City#save via method chain', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCall = calls.find(
+      (c) =>
+        c.target === 'save' && c.source === 'process_chain' && c.targetFilePath.includes('models'),
+    );
+    expect(saveCall).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase B: Deep MRO — walkParentChain() at depth 2 (C→B→A)
+// greet() is defined on A, accessed via C. Tests BFS depth-2 parent traversal.
+// ---------------------------------------------------------------------------
+
+describe('Python grandparent method resolution via MRO (Phase B)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'python-grandparent-resolution'),
+      () => {},
+    );
+  }, 60000);
+
+  it('detects A, B, C, Greeting classes', () => {
+    const classes = getNodesByLabel(result, 'Class');
+    expect(classes).toContain('A');
+    expect(classes).toContain('B');
+    expect(classes).toContain('C');
+    expect(classes).toContain('Greeting');
+  });
+
+  it('emits EXTENDS edges: B→A, C→B', () => {
+    const extends_ = getRelationships(result, 'EXTENDS');
+    expect(edgeSet(extends_)).toContain('B → A');
+    expect(edgeSet(extends_)).toContain('C → B');
+  });
+
+  it('resolves c.greet().save() to Greeting#save via depth-2 MRO lookup', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCall = calls.find(
+      (c) => c.target === 'save' && c.targetFilePath.includes('greeting'),
+    );
+    expect(saveCall).toBeDefined();
+  });
+
+  it('resolves c.greet() to A#greet (method found via MRO walk)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const greetCall = calls.find((c) => c.target === 'greet' && c.targetFilePath.includes('a.py'));
+    expect(greetCall).toBeDefined();
+  });
+});
+
+// ── Phase P: Default Parameter Arity Resolution ──────────────────────────
+
+describe('Python default parameter arity resolution', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-default-params'), () => {});
+  }, 60000);
+
+  it('resolves greet("alice") with 1 arg to greet with 2 params (1 default)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const greetCalls = calls.filter((c) => c.source === 'process' && c.target === 'greet');
+    expect(greetCalls.length).toBe(1);
+  });
+
+  it('resolves search("test") with 1 arg to search with 2 params (1 default)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const searchCalls = calls.filter((c) => c.source === 'process' && c.target === 'search');
+    expect(searchCalls.length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 14: Cross-file binding propagation
+// models.py exports get_user() -> User
+// app.py imports get_user, calls u = get_user(); u.save(); u.get_name()
+// → u is typed User via cross-file return type propagation
+// ---------------------------------------------------------------------------
+
+describe('Python cross-file binding propagation', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(CROSS_FILE_FIXTURES, 'py-cross-file'), () => {});
+  }, 60000);
+
+  it('detects User class with save and get_name methods', () => {
+    expect(getNodesByLabel(result, 'Class')).toContain('User');
+    expect(getNodesByLabel(result, 'Method')).toEqual(expect.arrayContaining(['save', 'get_name']));
+  });
+
+  it('detects get_user and run functions', () => {
+    expect(getNodesByLabel(result, 'Function')).toContain('get_user');
+    expect(getNodesByLabel(result, 'Function')).toContain('run');
+  });
+
+  it('emits IMPORTS edge from app.py to models.py', () => {
+    const imports = getRelationships(result, 'IMPORTS');
+    const edge = imports.find(
+      (e) => e.sourceFilePath.includes('app') && e.targetFilePath.includes('models'),
+    );
+    expect(edge).toBeDefined();
+  });
+
+  it('resolves u.save() in run() to User#save via cross-file return type propagation', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCall = calls.find(
+      (c) => c.target === 'save' && c.source === 'run' && c.targetFilePath.includes('models'),
+    );
+    expect(saveCall).toBeDefined();
+  });
+
+  it('resolves u.get_name() in run() to User#get_name via cross-file return type propagation', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const getNameCall = calls.find(
+      (c) => c.target === 'get_name' && c.source === 'run' && c.targetFilePath.includes('models'),
+    );
+    expect(getNameCall).toBeDefined();
+  });
+
+  it('emits HAS_METHOD edges linking save and get_name to User', () => {
+    const hasMethod = getRelationships(result, 'HAS_METHOD');
+    const saveEdge = hasMethod.find((e) => e.source === 'User' && e.target === 'save');
+    const getNameEdge = hasMethod.find((e) => e.source === 'User' && e.target === 'get_name');
+    expect(saveEdge).toBeDefined();
+    expect(getNameEdge).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Module import: `import models; models.User()` should produce CALLS edges
+// even when multiple imported modules export a class with the same name.
+// Python's `import models` is a namespace import — moduleAliasMap maps the
+// module alias to its source file, enabling resolveCallTarget to disambiguate
+// `models.User()` from `auth.User()` when both modules export `User`.
+// ---------------------------------------------------------------------------
+
+describe('Python module import CALLS resolution (Issue #337)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-module-import'), () => {});
+  }, 60000);
+
+  // ── Node detection ──────────────────────────────────────────────────
+
+  it('detects exactly 3 Class nodes: User (×2) and Admin (×1)', () => {
+    const classes = getNodesByLabel(result, 'Class');
+    expect(classes.length).toBe(3);
+    expect(classes.filter((c) => c === 'User').length).toBe(2);
+    expect(classes.filter((c) => c === 'Admin').length).toBe(1);
+  });
+
+  it('detects exactly 3 Method nodes: save, verify, login', () => {
+    const methods = getNodesByLabel(result, 'Method');
+    expect(methods.length).toBe(3);
+    expect(methods).toContain('save');
+    expect(methods).toContain('verify');
+    expect(methods).toContain('login');
+  });
+
+  // ── IMPORTS edges ───────────────────────────────────────────────────
+
+  it('emits exactly 2 IMPORTS edges from app.py', () => {
+    const imports = getRelationships(result, 'IMPORTS');
+    const appImports = imports.filter((e) => e.sourceFilePath === 'app.py');
+    expect(appImports.length).toBe(2);
+  });
+
+  it('resolves `import models` IMPORTS edge: app.py → models.py', () => {
+    const imports = getRelationships(result, 'IMPORTS');
+    const toModels = imports.find(
+      (e) => e.sourceFilePath === 'app.py' && e.targetFilePath === 'models.py',
+    );
+    expect(toModels).toBeDefined();
+  });
+
+  it('resolves `import auth` IMPORTS edge: app.py → auth.py', () => {
+    const imports = getRelationships(result, 'IMPORTS');
+    const toAuth = imports.find(
+      (e) => e.sourceFilePath === 'app.py' && e.targetFilePath === 'auth.py',
+    );
+    expect(toAuth).toBeDefined();
+  });
+
+  it('no IMPORTS edge from models.py or auth.py (they import nothing)', () => {
+    const imports = getRelationships(result, 'IMPORTS');
+    const fromModels = imports.filter((e) => e.sourceFilePath === 'models.py');
+    const fromAuth = imports.filter((e) => e.sourceFilePath === 'auth.py');
+    expect(fromModels.length).toBe(0);
+    expect(fromAuth.length).toBe(0);
+  });
+
+  // ── CALLS edges: key regression test (Issue #337) ───────────────────
+
+  it('resolves models.User() CALLS edge from app.py to models.py:User', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const userCall = calls.find(
+      (c) =>
+        c.target === 'User' && c.targetFilePath === 'models.py' && c.sourceFilePath === 'app.py',
+    );
+    expect(userCall).toBeDefined();
+  });
+
+  it('resolves auth.Admin() CALLS edge from app.py to auth.py:Admin', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const adminCall = calls.find(
+      (c) =>
+        c.target === 'Admin' && c.targetFilePath === 'auth.py' && c.sourceFilePath === 'app.py',
+    );
+    expect(adminCall).toBeDefined();
+  });
+
+  it('resolves u.save() method call from app.py to models.py:save', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCall = calls.find(
+      (c) =>
+        c.target === 'save' && c.targetFilePath === 'models.py' && c.sourceFilePath === 'app.py',
+    );
+    expect(saveCall).toBeDefined();
+  });
+
+  it('resolves a.login() method call from app.py to auth.py:login', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const loginCall = calls.find(
+      (c) =>
+        c.target === 'login' && c.targetFilePath === 'auth.py' && c.sourceFilePath === 'app.py',
+    );
+    expect(loginCall).toBeDefined();
+  });
+
+  // ── Negative tests ──────────────────────────────────────────────────
+
+  it('no CALLS edges originate from models.py or auth.py (they have no callers)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const fromModels = calls.filter((c) => c.sourceFilePath === 'models.py');
+    const fromAuth = calls.filter((c) => c.sourceFilePath === 'auth.py');
+    expect(fromModels.length).toBe(0);
+    expect(fromAuth.length).toBe(0);
+  });
+
+  it('Admin() does NOT resolve to models.py (Admin only exists in auth.py)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const wrongAdmin = calls.find((c) => c.target === 'Admin' && c.targetFilePath === 'models.py');
+    expect(wrongAdmin).toBeUndefined();
+  });
+
+  it('no EXTENDS edges (no inheritance in this fixture)', () => {
+    const extends_ = getRelationships(result, 'EXTENDS');
+    expect(extends_.length).toBe(0);
+  });
+
+  // ── Same-name cross-module disambiguation ───────────────────────────
+
+  it('resolves auth.User() CALLS edge to auth.py:User (not models.py:User)', () => {
+    // Both models.py and auth.py export User. moduleAliasMap maps
+    // receiverName='auth' → auth.py for correct disambiguation.
+    const calls = getRelationships(result, 'CALLS');
+    const authUserCall = calls.find(
+      (c) => c.target === 'User' && c.targetFilePath === 'auth.py' && c.sourceFilePath === 'app.py',
+    );
+    expect(authUserCall).toBeDefined();
+  });
+
+  it('models.User() and auth.User() resolve to DIFFERENT files', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const userCalls = calls.filter((c) => c.target === 'User' && c.sourceFilePath === 'app.py');
+    expect(userCalls.length).toBe(2);
+    const targetFiles = new Set(userCalls.map((c) => c.targetFilePath));
+    expect(targetFiles.size).toBe(2);
+    expect(targetFiles).toContain('models.py');
+    expect(targetFiles).toContain('auth.py');
+  });
+
+  it('v.verify() resolves to auth.py:verify (via auth.User() constructor inference)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const verifyCall = calls.find(
+      (c) =>
+        c.target === 'verify' && c.targetFilePath === 'auth.py' && c.sourceFilePath === 'app.py',
+    );
+    expect(verifyCall).toBeDefined();
+  });
+
+  // ── HAS_METHOD edges ────────────────────────────────────────────────
+
+  it('emits HAS_METHOD edges linking methods to their classes', () => {
+    const hasMethod = getRelationships(result, 'HAS_METHOD');
+    // models.py: User → save
+    const modelsUserSave = hasMethod.find(
+      (e) => e.source === 'User' && e.target === 'save' && e.sourceFilePath === 'models.py',
+    );
+    expect(modelsUserSave).toBeDefined();
+    // auth.py: User → verify, Admin → login
+    const authUserVerify = hasMethod.find(
+      (e) => e.source === 'User' && e.target === 'verify' && e.sourceFilePath === 'auth.py',
+    );
+    const authAdminLogin = hasMethod.find(
+      (e) => e.source === 'Admin' && e.target === 'login' && e.sourceFilePath === 'auth.py',
+    );
+    expect(authUserVerify).toBeDefined();
+    expect(authAdminLogin).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// External dotted imports: framework modules like django.apps must not resolve
+// to unrelated local basename matches such as accounts/apps.py or config/urls.py.
+// ---------------------------------------------------------------------------
+
+describe('Python external dotted imports do not self-resolve to local files', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-django-app-imports'), () => {});
+  }, 60000);
+
+  it('keeps the real local cross-app import: billing/models.py -> accounts/models.py', () => {
+    const imports = getRelationships(result, 'IMPORTS');
+    const localImport = imports.find(
+      (e) => e.sourceFilePath === 'billing/models.py' && e.targetFilePath === 'accounts/models.py',
+    );
+    expect(localImport).toBeDefined();
+  });
+
+  it('does not resolve django.apps in app configs to local apps.py files', () => {
+    const imports = getRelationships(result, 'IMPORTS');
+    const appConfigImports = imports.filter((e) => e.sourceFilePath.endsWith('/apps.py'));
+    expect(appConfigImports.length).toBe(0);
+  });
+
+  it('does not resolve django.urls in config/urls.py to config/urls.py', () => {
+    const imports = getRelationships(result, 'IMPORTS');
+    const urlsImport = imports.find(
+      (e) => e.sourceFilePath === 'config/urls.py' && e.targetFilePath === 'config/urls.py',
+    );
+    expect(urlsImport).toBeUndefined();
+  });
+
+  it('does not resolve django.core.asgi or django.core.wsgi to local config modules', () => {
+    const imports = getRelationships(result, 'IMPORTS');
+    const asgiImport = imports.find(
+      (e) => e.sourceFilePath === 'config/asgi.py' && e.targetFilePath === 'config/asgi.py',
+    );
+    const wsgiImport = imports.find(
+      (e) => e.sourceFilePath === 'config/wsgi.py' && e.targetFilePath === 'config/wsgi.py',
+    );
+
+    expect(asgiImport).toBeUndefined();
+    expect(wsgiImport).toBeUndefined();
+  });
+
+  it('does not resolve other django.* imports to local same-basename files', () => {
+    const imports = getRelationships(result, 'IMPORTS');
+    const wrongTargets = new Set(['config/asgi.py', 'config/wsgi.py', 'config/urls.py']);
+    const misresolvedFrameworkImports = imports.filter((e) => wrongTargets.has(e.targetFilePath));
+    expect(misresolvedFrameworkImports.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 16: Method enrichment (isAbstract, parameterTypes, static methods)
+// models.py: Animal(ABC) with @abstractmethod speak, @staticmethod classify, breathe
+// Dog(Animal) overrides speak
+// app.py: dog.speak(), Dog.classify("dog")
+// ---------------------------------------------------------------------------
+
+describe('Python method enrichment', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-method-enrichment'), () => {});
+  }, 60000);
+
+  it('detects Animal and Dog classes', () => {
+    const classes = getNodesByLabel(result, 'Class');
+    expect(classes).toContain('Animal');
+    expect(classes).toContain('Dog');
+  });
+
+  it('emits HAS_METHOD edges for Animal methods', () => {
+    const hasMethod = getRelationships(result, 'HAS_METHOD');
+    const animalMethods = hasMethod
+      .filter((e) => e.source === 'Animal')
+      .map((e) => e.target)
+      .sort();
+    expect(animalMethods).toContain('speak');
+    expect(animalMethods).toContain('classify');
+    expect(animalMethods).toContain('breathe');
+  });
+
+  it('emits HAS_METHOD edge for Dog.speak', () => {
+    const hasMethod = getRelationships(result, 'HAS_METHOD');
+    const dogSpeak = hasMethod.find((e) => e.source === 'Dog' && e.target === 'speak');
+    expect(dogSpeak).toBeDefined();
+  });
+
+  it('emits EXTENDS edge Dog -> Animal', () => {
+    const extends_ = getRelationships(result, 'EXTENDS');
+    const dogExtends = extends_.find((e) => e.source === 'Dog' && e.target === 'Animal');
+    expect(dogExtends).toBeDefined();
+  });
+
+  it('marks @abstractmethod speak as isAbstract (conditional)', () => {
+    const methods = getNodesByLabelFull(result, 'Function');
+    const speak = methods.find((n) => n.name === 'speak' && n.properties.filePath === 'models.py');
+    if (speak?.properties.isAbstract !== undefined) {
+      expect(speak.properties.isAbstract).toBe(true);
+    }
+  });
+
+  it('marks breathe as NOT isAbstract (conditional)', () => {
+    const methods = getNodesByLabelFull(result, 'Function');
+    const breathe = methods.find((n) => n.name === 'breathe');
+    if (breathe?.properties.isAbstract !== undefined) {
+      expect(breathe.properties.isAbstract).toBe(false);
+    }
+  });
+
+  it('populates parameterTypes for classify (conditional)', () => {
+    const methods = getNodesByLabelFull(result, 'Function');
+    const classify = methods.find((n) => n.name === 'classify');
+    if (classify?.properties.parameterTypes !== undefined) {
+      const params = classify.properties.parameterTypes;
+      expect(params).toContain('str');
+    }
+  });
+
+  it('resolves dog.speak() CALLS edge', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const speakCall = calls.find((c) => c.target === 'speak' && c.sourceFilePath === 'app.py');
+    expect(speakCall).toBeDefined();
+  });
+
+  it('resolves Dog.classify("dog") static CALLS edge', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const classifyCall = calls.find(
+      (c) => c.target === 'classify' && c.sourceFilePath === 'app.py',
+    );
+    expect(classifyCall).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 17: Overload dispatch (similarly-named methods/functions)
+// service.py: Formatter.format, Formatter.format_with_prefix,
+//             format_text, format_text_with_width
+// app.py: calls all four
+// ---------------------------------------------------------------------------
+
+describe('Python overload dispatch', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-overload-dispatch'), () => {});
+  }, 60000);
+
+  it('detects Formatter class', () => {
+    expect(getNodesByLabel(result, 'Class')).toContain('Formatter');
+  });
+
+  it('classifies overload methods separately from free functions', () => {
+    const fns = getNodesByLabel(result, 'Function');
+    expect(fns).toContain('format_text');
+    expect(fns).toContain('format_text_with_width');
+    expect(fns).toContain('run');
+    expect(getNodesByLabel(result, 'Method')).toEqual(
+      expect.arrayContaining(['format', 'format_with_prefix']),
+    );
+  });
+
+  it('emits HAS_METHOD for Formatter.format and Formatter.format_with_prefix', () => {
+    const hasMethod = getRelationships(result, 'HAS_METHOD');
+    const fmtFormat = hasMethod.find((e) => e.source === 'Formatter' && e.target === 'format');
+    const fmtPrefix = hasMethod.find(
+      (e) => e.source === 'Formatter' && e.target === 'format_with_prefix',
+    );
+    expect(fmtFormat).toBeDefined();
+    expect(fmtPrefix).toBeDefined();
+  });
+
+  it('resolves f.format("hello") to Formatter.format', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const formatCall = calls.find((c) => c.target === 'format' && c.sourceFilePath === 'app.py');
+    expect(formatCall).toBeDefined();
+  });
+
+  it('resolves f.format_with_prefix("hello",">>") to Formatter.format_with_prefix', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const prefixCall = calls.find(
+      (c) => c.target === 'format_with_prefix' && c.sourceFilePath === 'app.py',
+    );
+    expect(prefixCall).toBeDefined();
+  });
+
+  it('resolves format_text() top-level call', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const textCall = calls.find((c) => c.target === 'format_text' && c.sourceFilePath === 'app.py');
+    expect(textCall).toBeDefined();
+  });
+
+  it('resolves format_text_with_width() top-level call', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const widthCall = calls.find(
+      (c) => c.target === 'format_text_with_width' && c.sourceFilePath === 'app.py',
+    );
+    expect(widthCall).toBeDefined();
+  });
+
+  it('populates parameterTypes for format_with_prefix (conditional)', () => {
+    const methods = getNodesByLabelFull(result, 'Function');
+    const fwp = methods.find((n) => n.name === 'format_with_prefix');
+    if (fwp?.properties.parameterTypes !== undefined) {
+      const params = fwp.properties.parameterTypes;
+      expect(params).toContain('str');
+    }
+  });
+
+  it('populates parameterTypes for format_text_with_width (conditional)', () => {
+    const fns = getNodesByLabelFull(result, 'Function');
+    const ftw = fns.find((n) => n.name === 'format_text_with_width');
+    if (ftw?.properties.parameterTypes !== undefined) {
+      const params = ftw.properties.parameterTypes;
+      expect(params).toContain('str');
+      expect(params).toContain('int');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 18: Abstract dispatch (ABC base + concrete impl + receiver resolution)
+// base.py: Repository(ABC) with @abstractmethod find, save
+// impl.py: SqlRepository(Repository) implements find, save
+// app.py: repo = SqlRepository(); repo.find(42); repo.save(user)
+// ---------------------------------------------------------------------------
+
+describe('Python abstract dispatch', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-abstract-dispatch'), () => {});
+  }, 60000);
+
+  it('detects Repository and SqlRepository classes', () => {
+    const classes = getNodesByLabel(result, 'Class');
+    expect(classes).toContain('Repository');
+    expect(classes).toContain('SqlRepository');
+  });
+
+  it('emits EXTENDS edge SqlRepository -> Repository', () => {
+    const extends_ = getRelationships(result, 'EXTENDS');
+    const edge = extends_.find((e) => e.source === 'SqlRepository' && e.target === 'Repository');
+    expect(edge).toBeDefined();
+  });
+
+  it('emits HAS_METHOD edges for Repository.find and Repository.save', () => {
+    const hasMethod = getRelationships(result, 'HAS_METHOD');
+    const repoFind = hasMethod.find((e) => e.source === 'Repository' && e.target === 'find');
+    const repoSave = hasMethod.find((e) => e.source === 'Repository' && e.target === 'save');
+    expect(repoFind).toBeDefined();
+    expect(repoSave).toBeDefined();
+  });
+
+  it('emits HAS_METHOD edges for SqlRepository.find and SqlRepository.save', () => {
+    const hasMethod = getRelationships(result, 'HAS_METHOD');
+    const sqlFind = hasMethod.find((e) => e.source === 'SqlRepository' && e.target === 'find');
+    const sqlSave = hasMethod.find((e) => e.source === 'SqlRepository' && e.target === 'save');
+    expect(sqlFind).toBeDefined();
+    expect(sqlSave).toBeDefined();
+  });
+
+  it('marks base Repository.find as isAbstract (conditional)', () => {
+    const methods = getNodesByLabelFull(result, 'Function');
+    const baseFind = methods.find((n) => n.name === 'find' && n.properties.filePath === 'base.py');
+    if (baseFind?.properties.isAbstract !== undefined) {
+      expect(baseFind.properties.isAbstract).toBe(true);
+    }
+  });
+
+  it('marks base Repository.save as isAbstract (conditional)', () => {
+    const methods = getNodesByLabelFull(result, 'Function');
+    const baseSave = methods.find((n) => n.name === 'save' && n.properties.filePath === 'base.py');
+    if (baseSave?.properties.isAbstract !== undefined) {
+      expect(baseSave.properties.isAbstract).toBe(true);
+    }
+  });
+
+  it('marks concrete SqlRepository.find as NOT isAbstract (conditional)', () => {
+    const methods = getNodesByLabelFull(result, 'Function');
+    const sqlFind = methods.find((n) => n.name === 'find' && n.properties.filePath === 'impl.py');
+    if (sqlFind?.properties.isAbstract !== undefined) {
+      expect(sqlFind.properties.isAbstract).toBe(false);
+    }
+  });
+
+  it('resolves repo.find(42) CALLS edge', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const findCall = calls.find((c) => c.target === 'find' && c.sourceFilePath === 'app.py');
+    expect(findCall).toBeDefined();
+  });
+
+  it('resolves repo.save(user) CALLS edge', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCall = calls.find((c) => c.target === 'save' && c.sourceFilePath === 'app.py');
+    expect(saveCall).toBeDefined();
+  });
+
+  it('populates parameterTypes for Repository.find (conditional)', () => {
+    const methods = getNodesByLabelFull(result, 'Function');
+    const baseFind = methods.find((n) => n.name === 'find' && n.properties.filePath === 'base.py');
+    if (baseFind?.properties.parameterTypes !== undefined) {
+      const params = baseFind.properties.parameterTypes;
+      expect(params).toContain('int');
+    }
+  });
+
+  it('does not emit METHOD_IMPLEMENTS for abstract-class inheritance (only interface/trait parents)', () => {
+    // Python ABC is modelled as a Class with EXTENDS (not Interface with IMPLEMENTS),
+    // so the MRO processor does not emit METHOD_IMPLEMENTS edges here.
+    const mi = getRelationships(result, 'METHOD_IMPLEMENTS');
+    const edges = mi.filter(
+      (e) => e.sourceFilePath.includes('impl.py') && e.targetFilePath.includes('base.py'),
+    );
+    expect(edges.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SM-9: lookupMethodByOwnerWithMRO — child.parent_method() via C3 parent walk
+// ---------------------------------------------------------------------------
+
+describe('Python Child extends Parent — inherited method resolution (SM-9)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'python-child-extends-parent'),
+      () => {},
+    );
+  }, 60000);
+
+  it('detects Parent and Child classes', () => {
+    const classes = getNodesByLabel(result, 'Class');
+    expect(classes).toContain('Parent');
+    expect(classes).toContain('Child');
+  });
+
+  it('emits EXTENDS edge: Child → Parent', () => {
+    const extends_ = getRelationships(result, 'EXTENDS');
+    expect(edgeSet(extends_)).toContain('Child → Parent');
+  });
+
+  it('resolves c.parent_method() to Parent.parent_method via C3 MRO walk', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const parentMethodCall = calls.find(
+      (c) => c.target === 'parent_method' && c.targetFilePath.includes('parent.py'),
+    );
+    expect(parentMethodCall).toBeDefined();
+    expect(parentMethodCall!.source).toBe('run');
+  });
+});
+
+describe('Python Grandchild→Child→Parent — 3-level C3 MRO walk (SM-11)', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(path.join(FIXTURES, 'python-multi-level-mro'), () => {});
+  }, 60000);
+
+  it('detects Grandparent, Parent, and Child classes', () => {
+    const classes = getNodesByLabel(result, 'Class');
+    expect(classes).toContain('Grandparent');
+    expect(classes).toContain('Parent');
+    expect(classes).toContain('Child');
+  });
+
+  it('emits EXTENDS chain: Child → Parent, Parent → Grandparent', () => {
+    const extends_ = getRelationships(result, 'EXTENDS');
+    expect(edgeSet(extends_)).toContain('Child → Parent');
+    expect(edgeSet(extends_)).toContain('Parent → Grandparent');
+  });
+
+  it('resolves c.gp_method() to Grandparent.gp_method via 3-level C3 walk', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const gpCall = calls.find(
+      (c) => c.target === 'gp_method' && c.targetFilePath.includes('grandparent.py'),
+    );
+    expect(gpCall).toBeDefined();
+    expect(gpCall!.source).toBe('run');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Same-file method-name collision across classes
+// PR #980 review feedback — without a qualified-name key in the node lookup,
+// User.save and Document.save share the bucket `models.py::save`, so every
+// d.save() CALLS edge silently resolves to the first save() seen.
+// ---------------------------------------------------------------------------
+
+describe('Python same-file method-name collision across classes', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'python-same-file-method-collision'),
+      () => {},
+    );
+  }, 60000);
+
+  it('u.save() resolves to User.save, not Document.save', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCalls = calls.filter((c) => c.target === 'save');
+    const fromUseUser = saveCalls.find((c) => c.source === 'use_user');
+    expect(fromUseUser).toBeDefined();
+    // targetId encodes qualifier: Method:models.py:User.save#0
+    expect(fromUseUser!.rel.targetId).toContain('User.save');
+    expect(fromUseUser!.rel.targetId).not.toContain('Document.save');
+  });
+
+  it('d.save() resolves to Document.save, not User.save', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCalls = calls.filter((c) => c.target === 'save');
+    const fromUseDoc = saveCalls.find((c) => c.source === 'use_document');
+    expect(fromUseDoc).toBeDefined();
+    expect(fromUseDoc!.rel.targetId).toContain('Document.save');
+    expect(fromUseDoc!.rel.targetId).not.toContain('User.save');
+  });
+
+  it('exactly two CALLS edges to save() — one per class, no duplication to wrong target', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCalls = calls.filter((c) => c.target === 'save');
+    expect(saveCalls).toHaveLength(2);
+    const targets = saveCalls.map((c) => c.rel.targetId).sort();
+    expect(targets[0]).toContain('Document.save');
+    expect(targets[1]).toContain('User.save');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Module export vs class method collision within the same file
+// Codex review on PR #980 flagged: buildWorkspaceResolutionIndex feeds
+// defsByFileAndName and callablesBySimpleName from parsed.localDefs (every
+// def in the file, flat). A class method declared before a top-level
+// function with the same simple name wins the file-level export lookup,
+// so `mod.save(x)` silently binds to `User.save`.
+// ---------------------------------------------------------------------------
+
+describe('Python module export vs method-name collision in same file', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'python-module-export-vs-method-collision'),
+      () => {},
+    );
+  }, 60000);
+
+  it('mod.save(x) resolves to the module-level Function, not User.save', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCalls = calls.filter((c) => c.target === 'save');
+    const fromModuleExport = saveCalls.find((c) => c.source === 'use_module_export');
+    expect(fromModuleExport).toBeDefined();
+    // Target must be the top-level Function save, not the User.save Method.
+    // Node id format: `Function:mod.py:save` vs `Method:mod.py:User.save#0`.
+    expect(fromModuleExport!.rel.targetId).toContain('Function:');
+    expect(fromModuleExport!.rel.targetId).toContain('mod.py:save');
+    expect(fromModuleExport!.rel.targetId).not.toContain('User.save');
+  });
+
+  it('u.save() resolves to User.save Method via typed receiver', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCalls = calls.filter((c) => c.target === 'save');
+    const fromMethod = saveCalls.find((c) => c.source === 'use_method');
+    expect(fromMethod).toBeDefined();
+    expect(fromMethod!.rel.targetId).toContain('User.save');
+  });
+
+  it('exactly two CALLS edges to save — one to the free function, one to the method', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCalls = calls.filter((c) => c.target === 'save');
+    expect(saveCalls).toHaveLength(2);
+    const targetIds = saveCalls.map((c) => c.rel.targetId).sort();
+    // One Function target, one Method target. Exact shape pins the fix.
+    const hasFunctionTarget = targetIds.some(
+      (id) => id.startsWith('Function:') && !id.includes('User.save'),
+    );
+    const hasMethodTarget = targetIds.some((id) => id.includes('User.save'));
+    expect(hasFunctionTarget).toBe(true);
+    expect(hasMethodTarget).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Class-body attribute leak into module export index
+// Codex round-2 review on PR #980: defsByFileAndName indexes ALL defs
+// owned by every child scope of the module, including class-body defs
+// (e.g. `User.MAX_USERS`). `mod.MAX_USERS` / `from mod import MAX_USERS`
+// can silently bind to a class attribute that's not a module export.
+// ---------------------------------------------------------------------------
+
+describe('Python class-body attribute does NOT leak into module export index', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'python-class-attr-export-leak'),
+      () => {},
+    );
+  }, 60000);
+
+  it('mod.MAX_USERS does not resolve to User.MAX_USERS as a module export', () => {
+    // Any edge sourced from `use_class_attr` must NOT target a node
+    // that represents `User.MAX_USERS`. Under the bug, CALLS/USES/
+    // ACCESSES could silently bind to the class attribute.
+    const edges = [
+      ...getRelationships(result, 'CALLS'),
+      ...getRelationships(result, 'USES'),
+      ...getRelationships(result, 'ACCESSES'),
+    ];
+    const fromConsumer = edges.filter((e) => e.source === 'use_class_attr');
+    for (const edge of fromConsumer) {
+      expect(edge.rel.targetId).not.toContain('User.MAX_USERS');
+    }
+  });
+
+  it('mod.helper() still resolves to the top-level Function (happy-path guard)', () => {
+    // Regression guard: the narrowing fix must not drop legitimate
+    // top-level function exports. Without this, the fix would over-
+    // narrow and break normal `mod.helper()` calls.
+    const calls = getRelationships(result, 'CALLS');
+    const helperCall = calls.find((c) => c.source === 'use_helper' && c.target === 'helper');
+    expect(helperCall).toBeDefined();
+    expect(helperCall!.rel.targetId).toContain('mod.py:helper');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Function-local import + cross-file return-type propagation
+// Codex round-2 flagged this as potentially broken, but empirically the
+// finalize-algorithm hoists the `from svc import get_user` binding to
+// the app.py module scope (observed via indexes.bindings dump), so
+// `propagateImportedReturnTypes`'s module-scope pass already handles
+// it. These assertions pin that working behavior as a regression
+// guard against any future change to binding-scope routing.
+// ---------------------------------------------------------------------------
+
+describe('Python function-local import feeds chained receiver-bound call', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'python-function-local-import-chain'),
+      () => {},
+    );
+  }, 60000);
+
+  it('emits CALLS edge do_work -> get_user (free call, baseline sanity)', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const getUserCall = calls.find((c) => c.source === 'do_work' && c.target === 'get_user');
+    expect(getUserCall).toBeDefined();
+    expect(getUserCall!.rel.targetId).toContain('svc.py:get_user');
+  });
+
+  it('emits CALLS edge do_work -> User.save via function-local-scoped import return-type', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const saveCall = calls.find((c) => c.source === 'do_work' && c.target === 'save');
+    expect(saveCall).toBeDefined();
+    // Target must be the User.save Method in svc.py.
+    expect(saveCall!.rel.targetId).toContain('User.save');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Function-local namespace import: `def f(): import svc as s; s.call()`
+// Codex round-3 flagged this pattern as potentially broken because
+// collectNamespaceTargets reads only module-scope imports. Empirically
+// the edge IS emitted (finalize hoists ImportEdges onto the module
+// scope), so these assertions pin the working behavior. If finalize
+// routing ever changes to match pythonImportOwningScope's per-scope
+// contract, this block will flip red and signal the need to make
+// collectNamespaceTargets scope-chain-aware.
+// ---------------------------------------------------------------------------
+
+describe('Python function-local namespace import feeds receiver-bound call', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'python-function-local-namespace-import'),
+      () => {},
+    );
+  }, 60000);
+
+  it('emits CALLS edge outer -> svc.call via function-local `import svc as s`', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const callEdge = calls.find((c) => c.source === 'outer' && c.target === 'call');
+    expect(callEdge).toBeDefined();
+    expect(callEdge!.rel.targetId).toContain('svc.py:call');
+  });
+
+  it('sanity: unrelated function without local import is still parsed as a Function node', () => {
+    const fns = result.graph.nodes.filter(
+      (n) => n.label === 'Function' && n.properties.name === 'sanity',
+    );
+    expect(fns).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Class-body namespace import: `class A: import mod; def use(): mod.helper()`
+// Same theoretical concern as the function-local case above, same
+// empirical outcome — finalize hoists the ImportEdge to the module
+// scope so the namespace-receiver path finds it from inside A.use.
+// These assertions pin that working behavior.
+// ---------------------------------------------------------------------------
+
+describe('Python class-body namespace import feeds method receiver-bound call', () => {
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    result = await runPipelineFromRepo(
+      path.join(FIXTURES, 'python-class-body-namespace-import'),
+      () => {},
+    );
+  }, 60000);
+
+  it('emits CALLS edge A.use -> mod.helper via class-body `import mod`', () => {
+    const calls = getRelationships(result, 'CALLS');
+    const callEdge = calls.find((c) => c.source === 'use' && c.target === 'helper');
+    expect(callEdge).toBeDefined();
+    expect(callEdge!.rel.targetId).toContain('mod.py:helper');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #1066 sibling regression for Python: force worker-mode extraction so
+// scope-resolution reparses on cache miss, then assert large ASCII and
+// UTF-8-heavy source files still produce trailing call edges.
+// ---------------------------------------------------------------------------
+
+describe('Python large-file cache-miss parser buffer regression', () => {
+  let repoDir: string;
+  let result: PipelineResult;
+
+  beforeAll(async () => {
+    repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gn-python-large-cache-'));
+    writeFixtureRepo(repoDir, {
+      'models.py': `
+class User:
+    def save(self):
+        return True
+`,
+      'ascii_app.py': `from models import User
+
+# ${'x'.repeat(120 * 1024)}
+def create_ascii_user():
+    user = User()
+    user.save()
+`,
+      'utf8_app.py': `from models import User
+
+# ${'漢'.repeat(120_000)}
+def create_utf8_user():
+    user = User()
+    user.save()
+`,
+    });
+    result = await runPipelineFromRepo(repoDir, () => {}, {
+      workerThresholdsForTest: { minFiles: 1, minBytes: 0 },
+    });
+  }, 120000);
+
+  afterAll(() => {
+    if (repoDir !== undefined) fs.rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  it('extracts trailing functions after large ASCII and UTF-8 padding', () => {
+    expect(getNodesByLabel(result, 'Function')).toEqual(
+      expect.arrayContaining(['create_ascii_user', 'create_utf8_user']),
+    );
+  });
+
+  it('resolves calls from both padded files to User.save', () => {
+    const calls = getRelationships(result, 'CALLS');
+    for (const source of ['create_ascii_user', 'create_utf8_user']) {
+      const save = calls.find((c) => c.source === source && c.target === 'save');
+      expect(save).toBeDefined();
+      expect(save!.targetFilePath).toBe('models.py');
+    }
   });
 });

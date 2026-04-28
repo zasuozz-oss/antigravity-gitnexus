@@ -5,22 +5,35 @@ import Python from 'tree-sitter-python';
 import Java from 'tree-sitter-java';
 import C from 'tree-sitter-c';
 import CPP from 'tree-sitter-cpp';
-import CSharp from 'tree-sitter-c-sharp';
+// Explicit subpath import: tree-sitter-c-sharp declares `type: "module"` with
+// `main: "bindings/node"` (no extension) and no `exports` field, which triggers
+// Node 22's DEP0151 deprecation warning on the bare-package import. Importing
+// the built entrypoint directly bypasses the deprecated ESM main-field
+// resolution. (#1013)
+import CSharp from 'tree-sitter-c-sharp/bindings/node/index.js';
 import Go from 'tree-sitter-go';
 import Rust from 'tree-sitter-rust';
 import PHP from 'tree-sitter-php';
 import Ruby from 'tree-sitter-ruby';
 import { createRequire } from 'node:module';
-import { SupportedLanguages } from '../../config/supported-languages.js';
+import { SupportedLanguages } from 'gitnexus-shared';
 
-// tree-sitter-swift is an optionalDependency — may not be installed
+// tree-sitter-swift and tree-sitter-dart are optionalDependencies — may not be installed
 const _require = createRequire(import.meta.url);
 let Swift: any = null;
-try { Swift = _require('tree-sitter-swift'); } catch {}
+try {
+  Swift = _require('tree-sitter-swift');
+} catch {}
+let Dart: any = null;
+try {
+  Dart = _require('tree-sitter-dart');
+} catch {}
 
 // tree-sitter-kotlin is an optionalDependency — may not be installed
 let Kotlin: any = null;
-try { Kotlin = _require('tree-sitter-kotlin'); } catch {}
+try {
+  Kotlin = _require('tree-sitter-kotlin');
+} catch {}
 
 let parser: Parser | null = null;
 
@@ -38,11 +51,27 @@ const languageMap: Record<string, any> = {
   ...(Kotlin ? { [SupportedLanguages.Kotlin]: Kotlin } : {}),
   [SupportedLanguages.PHP]: PHP.php_only,
   [SupportedLanguages.Ruby]: Ruby,
+  [SupportedLanguages.Vue]: TypeScript.typescript,
+  ...(Dart ? { [SupportedLanguages.Dart]: Dart } : {}),
   ...(Swift ? { [SupportedLanguages.Swift]: Swift } : {}),
 };
 
 export const isLanguageAvailable = (language: SupportedLanguages): boolean =>
   language in languageMap;
+
+export const resolveLanguageKey = (language: SupportedLanguages, filePath?: string): string =>
+  language === SupportedLanguages.TypeScript && filePath?.endsWith('.tsx')
+    ? `${language}:tsx`
+    : language;
+
+export const getLanguageGrammar = (language: SupportedLanguages, filePath?: string): any => {
+  const key = resolveLanguageKey(language, filePath);
+  const lang = languageMap[key];
+  if (!lang) {
+    throw new Error(`Unsupported language: ${language}`);
+  }
+  return lang;
+};
 
 export const loadParser = async (): Promise<Parser> => {
   if (parser) return parser;
@@ -50,15 +79,19 @@ export const loadParser = async (): Promise<Parser> => {
   return parser;
 };
 
-export const loadLanguage = async (language: SupportedLanguages, filePath?: string): Promise<void> => {
+export const loadLanguage = async (
+  language: SupportedLanguages,
+  filePath?: string,
+): Promise<void> => {
   if (!parser) await loadParser();
-  const key = language === SupportedLanguages.TypeScript && filePath?.endsWith('.tsx')
-    ? `${language}:tsx`
-    : language;
+  parser!.setLanguage(getLanguageGrammar(language, filePath));
+};
 
-  const lang = languageMap[key];
-  if (!lang) {
-    throw new Error(`Unsupported language: ${language}`);
-  }
-  parser!.setLanguage(lang);
+export const createParserForLanguage = async (
+  language: SupportedLanguages,
+  filePath?: string,
+): Promise<Parser> => {
+  const freshParser = new Parser();
+  freshParser.setLanguage(getLanguageGrammar(language, filePath));
+  return freshParser;
 };

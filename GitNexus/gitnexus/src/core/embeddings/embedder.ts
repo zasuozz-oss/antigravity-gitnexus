@@ -15,20 +15,59 @@ if (!process.env.ORT_LOG_LEVEL) {
 }
 
 import { pipeline, env, type FeatureExtractionPipeline } from '@huggingface/transformers';
+import os from 'os';
 import { existsSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { createRequire } from 'module';
 import { DEFAULT_EMBEDDING_CONFIG, type EmbeddingConfig, type ModelProgress } from './types.js';
+import { isHttpMode, getHttpDimensions, httpEmbed } from './http-client.js';
+
+/**
+ * Check whether the onnxruntime-node package that @huggingface/transformers
+ * will actually load at runtime ships the CUDA execution provider.
+ *
+ * Critical: we resolve from transformers' own module scope, NOT from ours.
+ * npm may install two copies — a top-level 1.24.x (our dep) and a nested
+ * 1.21.0 (transformers' pinned dep). The guard must inspect whichever copy
+ * transformers.js will dlopen, otherwise the check is meaningless.
+ */
+function hasOrtCudaProvider(): boolean {
+  try {
+    const require = createRequire(import.meta.url);
+    // Resolve from @huggingface/transformers' scope so we find the same
+    // onnxruntime-node binary that transformers.js will use at runtime
+    const transformersDir = dirname(require.resolve('@huggingface/transformers/package.json'));
+    const ortRequire = createRequire(join(transformersDir, 'package.json'));
+    const ortPath = dirname(ortRequire.resolve('onnxruntime-node/package.json'));
+    // ORT 1.24.x only ships CUDA binaries for linux/x64 (downloaded from NuGet
+    // at postinstall). arm64 will correctly return false here until ORT adds support.
+    const arch = process.arch;
+    return existsSync(
+      join(ortPath, 'bin', 'napi-v6', 'linux', arch, 'libonnxruntime_providers_cuda.so'),
+    );
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Check whether CUDA libraries are actually available on this system.
  * ONNX Runtime's native layer crashes (uncatchable) if we attempt CUDA
  * without the required shared libraries, so we probe first.
  *
- * Checks the dynamic linker cache (ldconfig) which covers all architectures
- * and install paths, then falls back to CUDA_PATH / LD_LIBRARY_PATH env vars.
+ * Checks both:
+ * 1. That system CUDA libraries (libcublasLt) are present
+ * 2. That onnxruntime-node ships the CUDA execution provider binary
+ *
+ * Both conditions must be true — system CUDA libs alone are not enough
+ * if onnxruntime-node is a CPU-only build (versions < 1.24.0).
  */
 function isCudaAvailable(): boolean {
+  // First, verify onnxruntime-node has the CUDA provider binary.
+  // Without this, requesting CUDA causes an uncatchable native crash.
+  if (!hasOrtCudaProvider()) return false;
+
   // Primary: query the dynamic linker cache — covers all architectures,
   // distro layouts, and custom install paths registered with ldconfig
   try {
@@ -44,9 +83,12 @@ function isCudaAvailable(): boolean {
     const val = process.env[envVar];
     if (!val) continue;
     for (const dir of val.split(':').filter(Boolean)) {
-      if (existsSync(join(dir, 'lib64', 'libcublasLt.so.12')) ||
-          existsSync(join(dir, 'lib', 'libcublasLt.so.12')) ||
-          existsSync(join(dir, 'libcublasLt.so.12'))) return true;
+      if (
+        existsSync(join(dir, 'lib64', 'libcublasLt.so.12')) ||
+        existsSync(join(dir, 'lib', 'libcublasLt.so.12')) ||
+        existsSync(join(dir, 'libcublasLt.so.12'))
+      )
+        return true;
     }
   }
 
@@ -72,7 +114,7 @@ export const getCurrentDevice = (): 'dml' | 'cuda' | 'cpu' | 'wasm' | null => cu
 /**
  * Initialize the embedding model
  * Uses singleton pattern - only loads once, subsequent calls return cached instance
- * 
+ *
  * @param onProgress - Optional callback for model download progress
  * @param config - Optional configuration override
  * @param forceDevice - Force a specific device
@@ -81,8 +123,15 @@ export const getCurrentDevice = (): 'dml' | 'cuda' | 'cpu' | 'wasm' | null => cu
 export const initEmbedder = async (
   onProgress?: ModelProgressCallback,
   config: Partial<EmbeddingConfig> = {},
-  forceDevice?: 'dml' | 'cuda' | 'cpu' | 'wasm'
+  forceDevice?: 'dml' | 'cuda' | 'cpu' | 'wasm',
 ): Promise<FeatureExtractionPipeline> => {
+  if (isHttpMode()) {
+    throw new Error(
+      'initEmbedder() should not be called in HTTP mode. ' +
+        'Use embedText()/embedBatch() which handle HTTP transparently.',
+    );
+  }
+
   // Return existing instance if available
   if (embedderInstance) {
     return embedderInstance;
@@ -94,42 +143,50 @@ export const initEmbedder = async (
   }
 
   isInitializing = true;
-  
+
   const finalConfig = { ...DEFAULT_EMBEDDING_CONFIG, ...config };
   // On Windows, use DirectML for GPU acceleration (via DirectX12)
   // CUDA is only available on Linux x64 with onnxruntime-node
   // Probe for CUDA first — ONNX Runtime crashes (uncatchable native error)
   // if we attempt CUDA without the required shared libraries
   const isWindows = process.platform === 'win32';
-  const gpuDevice = isWindows ? 'dml' : (isCudaAvailable() ? 'cuda' : 'cpu');
-  let requestedDevice = forceDevice || (finalConfig.device === 'auto' ? gpuDevice : finalConfig.device);
+  const gpuDevice = isWindows ? 'dml' : isCudaAvailable() ? 'cuda' : 'cpu';
+  const requestedDevice =
+    forceDevice || (finalConfig.device === 'auto' ? gpuDevice : finalConfig.device);
 
   initPromise = (async () => {
     try {
       // Configure transformers.js environment
       env.allowLocalModels = false;
-      
+      // Default cache to user-writable location. transformers.js defaults to
+      // ./node_modules/.cache inside its own install dir, which is unwritable
+      // when gitnexus is installed globally (e.g. /usr/lib/node_modules/).
+      // Respect HF_HOME if set, otherwise fall back to ~/.cache/huggingface.
+      env.cacheDir = process.env.HF_HOME ?? join(os.homedir(), '.cache', 'huggingface');
+
       const isDev = process.env.NODE_ENV === 'development';
       if (isDev) {
         console.log(`🧠 Loading embedding model: ${finalConfig.modelId}`);
       }
 
-      const progressCallback = onProgress ? (data: any) => {
-        const progress: ModelProgress = {
-          status: data.status || 'progress',
-          file: data.file,
-          progress: data.progress,
-          loaded: data.loaded,
-          total: data.total,
-        };
-        onProgress(progress);
-      } : undefined;
+      const progressCallback = onProgress
+        ? (data: any) => {
+            const progress: ModelProgress = {
+              status: data.status || 'progress',
+              file: data.file,
+              progress: data.progress,
+              loaded: data.loaded,
+              total: data.total,
+            };
+            onProgress(progress);
+          }
+        : undefined;
 
       // Try GPU first if auto, fall back to CPU
       // Windows: dml (DirectML/DirectX12), Linux: cuda
-      const devicesToTry: Array<'dml' | 'cuda' | 'cpu' | 'wasm'> = 
-        (requestedDevice === 'dml' || requestedDevice === 'cuda') 
-          ? [requestedDevice, 'cpu'] 
+      const devicesToTry: Array<'dml' | 'cuda' | 'cpu' | 'wasm'> =
+        requestedDevice === 'dml' || requestedDevice === 'cuda'
+          ? [requestedDevice, 'cpu']
           : [requestedDevice as 'cpu' | 'wasm'];
 
       for (const device of devicesToTry) {
@@ -144,22 +201,21 @@ export const initEmbedder = async (
             console.log('🔧 Using WASM backend (slower)...');
           }
 
-          embedderInstance = await (pipeline as any)(
-            'feature-extraction',
-            finalConfig.modelId,
-            {
-              device: device,
-              dtype: 'fp32',
-              progress_callback: progressCallback,
-              session_options: { logSeverityLevel: 3 },
-            }
-          );
+          embedderInstance = await (pipeline as any)('feature-extraction', finalConfig.modelId, {
+            device: device,
+            dtype: 'fp32',
+            progress_callback: progressCallback,
+            session_options: { logSeverityLevel: 3 },
+          });
           currentDevice = device;
 
           if (isDev) {
-            const label = device === 'dml' ? 'GPU (DirectML/DirectX12)' 
-                        : device === 'cuda' ? 'GPU (CUDA)' 
-                        : device.toUpperCase();
+            const label =
+              device === 'dml'
+                ? 'GPU (DirectML/DirectX12)'
+                : device === 'cuda'
+                  ? 'GPU (CUDA)'
+                  : device.toUpperCase();
             console.log(`✅ Using ${label} backend`);
             console.log('✅ Embedding model loaded successfully');
           }
@@ -195,13 +251,29 @@ export const initEmbedder = async (
  * Check if the embedder is initialized and ready
  */
 export const isEmbedderReady = (): boolean => {
-  return embedderInstance !== null;
+  return isHttpMode() || embedderInstance !== null;
+};
+
+/**
+ * Get the effective embedding dimensions.
+ * In HTTP mode, uses GITNEXUS_EMBEDDING_DIMS if set, otherwise the default.
+ */
+export const getEmbeddingDimensions = (): number => {
+  if (isHttpMode()) {
+    return getHttpDimensions() ?? DEFAULT_EMBEDDING_CONFIG.dimensions;
+  }
+  return DEFAULT_EMBEDDING_CONFIG.dimensions;
 };
 
 /**
  * Get the embedder instance (throws if not initialized)
  */
 export const getEmbedder = (): FeatureExtractionPipeline => {
+  if (isHttpMode()) {
+    throw new Error(
+      'getEmbedder() is not available in HTTP embedding mode. Use embedText()/embedBatch() instead.',
+    );
+  }
   if (!embedderInstance) {
     throw new Error('Embedder not initialized. Call initEmbedder() first.');
   }
@@ -210,18 +282,23 @@ export const getEmbedder = (): FeatureExtractionPipeline => {
 
 /**
  * Embed a single text string
- * 
+ *
  * @param text - Text to embed
- * @returns Float32Array of embedding vector (384 dimensions)
+ * @returns Float32Array of embedding vector
  */
 export const embedText = async (text: string): Promise<Float32Array> => {
+  if (isHttpMode()) {
+    const [vec] = await httpEmbed([text]);
+    return vec;
+  }
+
   const embedder = getEmbedder();
-  
+
   const result = await embedder(text, {
     pooling: 'mean',
     normalize: true,
   });
-  
+
   // Result is a Tensor, convert to Float32Array
   return new Float32Array(result.data as ArrayLike<number>);
 };
@@ -229,7 +306,7 @@ export const embedText = async (text: string): Promise<Float32Array> => {
 /**
  * Embed multiple texts in a single batch
  * More efficient than calling embedText multiple times
- * 
+ *
  * @param texts - Array of texts to embed
  * @returns Array of Float32Array embedding vectors
  */
@@ -238,26 +315,30 @@ export const embedBatch = async (texts: string[]): Promise<Float32Array[]> => {
     return [];
   }
 
+  if (isHttpMode()) {
+    return httpEmbed(texts);
+  }
+
   const embedder = getEmbedder();
-  
+
   // Process batch
   const result = await embedder(texts, {
     pooling: 'mean',
     normalize: true,
   });
-  
+
   // Result shape is [batch_size, dimensions]
   // Need to split into individual vectors
   const data = result.data as ArrayLike<number>;
   const dimensions = DEFAULT_EMBEDDING_CONFIG.dimensions;
   const embeddings: Float32Array[] = [];
-  
+
   for (let i = 0; i < texts.length; i++) {
     const start = i * dimensions;
     const end = start + dimensions;
     embeddings.push(new Float32Array(Array.prototype.slice.call(data, start, end)));
   }
-  
+
   return embeddings;
 };
 
@@ -286,4 +367,3 @@ export const disposeEmbedder = async (): Promise<void> => {
     initPromise = null;
   }
 };
-

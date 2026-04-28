@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { detectFrameworkFromPath, detectFrameworkFromAST, FRAMEWORK_AST_PATTERNS } from '../../src/core/ingestion/framework-detection.js';
+import {
+  detectFrameworkFromPath,
+  detectFrameworkFromAST,
+  FRAMEWORK_AST_PATTERNS,
+} from '../../src/core/ingestion/framework-detection.js';
 
 describe('detectFrameworkFromPath', () => {
   describe('Next.js', () => {
@@ -39,6 +43,28 @@ describe('detectFrameworkFromPath', () => {
     });
   });
 
+  describe('Expo Router', () => {
+    it('detects _layout files', () => {
+      const result = detectFrameworkFromPath('app/_layout.tsx');
+      expect(result).not.toBeNull();
+      expect(result!.framework).toBe('expo-router');
+      expect(result!.reason).toBe('expo-layout');
+    });
+    it('detects +api routes', () => {
+      const result = detectFrameworkFromPath('app/users+api.ts');
+      expect(result).not.toBeNull();
+      expect(result!.framework).toBe('expo-router');
+      expect(result!.reason).toBe('expo-api-route');
+    });
+    it('detects screen files', () => {
+      const result = detectFrameworkFromPath('app/(tabs)/settings.tsx');
+      expect(result).not.toBeNull();
+      expect(result!.framework).toBe('expo-router');
+      expect(result!.reason).toBe('expo-screen');
+      expect(result!.entryPointMultiplier).toBe(2.5);
+    });
+  });
+
   describe('Express / Node.js', () => {
     it('detects route files', () => {
       const result = detectFrameworkFromPath('routes/auth.ts');
@@ -64,12 +90,11 @@ describe('detectFrameworkFromPath', () => {
 
   describe('React', () => {
     it('has React component detection rule for views/components folders', () => {
-      // Note: The current implementation lowercases the path before checking
-      // PascalCase, so PascalCase detection currently can't match.
-      // This test documents the current behavior.
       const result = detectFrameworkFromPath('views/Button.tsx');
-      // Returns null because path is lowercased before PascalCase regex check
-      expect(result).toBeNull();
+      expect(result).not.toBeNull();
+      expect(result!.framework).toBe('react');
+      expect(result!.entryPointMultiplier).toBe(1.5);
+      expect(result!.reason).toBe('react-component');
     });
   });
 
@@ -139,6 +164,11 @@ describe('detectFrameworkFromPath', () => {
       const result = detectFrameworkFromPath('cmd/server/main.go');
       expect(result).not.toBeNull();
       expect(result!.entryPointMultiplier).toBe(3.0);
+    });
+
+    it('does NOT treat Go helper files under cmd/ as entry points', () => {
+      expect(detectFrameworkFromPath('cmd/server/internal/util.go')).toBeNull();
+      expect(detectFrameworkFromPath('cmd/foo/config/setup.go')).toBeNull();
     });
   });
 
@@ -294,31 +324,74 @@ describe('detectFrameworkFromAST', () => {
   });
 
   it('detects Laravel route definitions in PHP', () => {
-    const result = detectFrameworkFromAST('php', "Route::get('/users', [UserController::class, 'index'])");
+    const result = detectFrameworkFromAST(
+      'php',
+      "Route::get('/users', [UserController::class, 'index'])",
+    );
     expect(result).not.toBeNull();
     expect(result!.framework).toBe('laravel');
   });
 
-  it('returns null for unsupported language', () => {
-    expect(detectFrameworkFromAST('rust', '#[get("/")]')).toBeNull();
+  it('detects Actix-web route attributes in Rust', () => {
+    const result = detectFrameworkFromAST('rust', '#[get("/")]');
+    expect(result).not.toBeNull();
+    expect(result!.framework).toBe('actix-web');
+  });
+
+  it('returns null for language with no matching pattern', () => {
+    expect(detectFrameworkFromAST('c', 'int main() { return 0; }')).toBeNull();
   });
 
   it('is case-insensitive', () => {
     const result = detectFrameworkFromAST('TypeScript', '@controller("/")');
     expect(result).not.toBeNull();
   });
+
+  it('detects Expo Router useRouter hook', () => {
+    const result = detectFrameworkFromAST('typescript', 'const router = useRouter()');
+    expect(result).not.toBeNull();
+    expect(result!.framework).toBe('expo-router');
+  });
+  it('detects Expo Router router.push', () => {
+    const result = detectFrameworkFromAST('javascript', "router.push('/settings')");
+    expect(result).not.toBeNull();
+    expect(result!.framework).toBe('expo-router');
+  });
 });
 
 describe('FRAMEWORK_AST_PATTERNS', () => {
   it('has patterns for all expected frameworks', () => {
     const expectedFrameworks = [
-      'nestjs', 'express', 'fastapi', 'flask', 'spring', 'jaxrs',
-      'aspnet', 'go-http', 'laravel', 'actix', 'axum', 'rocket',
-      'uikit', 'swiftui', 'combine',
+      'nestjs',
+      'expo-router',
+      'express',
+      'fastapi',
+      'flask',
+      'spring',
+      'jaxrs',
+      'aspnet',
+      'go-http',
+      'gin',
+      'echo',
+      'fiber',
+      'go-grpc',
+      'laravel',
+      'actix',
+      'axum',
+      'rocket',
+      'tokio',
+      'qt',
+      'uikit',
+      'swiftui',
+      'vapor',
+      'rails',
+      'sinatra',
     ];
     for (const fw of expectedFrameworks) {
       expect(FRAMEWORK_AST_PATTERNS).toHaveProperty(fw);
-      expect(FRAMEWORK_AST_PATTERNS[fw as keyof typeof FRAMEWORK_AST_PATTERNS].length).toBeGreaterThan(0);
+      expect(
+        FRAMEWORK_AST_PATTERNS[fw as keyof typeof FRAMEWORK_AST_PATTERNS].length,
+      ).toBeGreaterThan(0);
     }
   });
 });

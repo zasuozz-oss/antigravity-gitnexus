@@ -43,6 +43,19 @@ function ensureHeap(): boolean {
   return true;
 }
 
+function hasUnityRelevantChanges(repoPath: string): boolean {
+  try {
+    const status = execFileSync(
+      'git',
+      ['status', '--porcelain', '--', 'Assets', 'ProjectSettings', 'Packages'],
+      { cwd: repoPath, encoding: 'utf-8' },
+    ).trim();
+    return status.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export interface UnityAnalyzeOptions {
   force?: boolean;
   embeddings?: boolean;
@@ -150,6 +163,7 @@ export const unityAnalyzeCommand = async (
 
   // Load or create config
   let config: UnityConfig | null = null;
+  let configChanged = false;
 
   if (!options?.resetConfig) {
     config = await loadUnityConfig(storagePath);
@@ -178,6 +192,7 @@ export const unityAnalyzeCommand = async (
       console.log('  (edit unity.json to change)\n');
       config.lastScanAt = new Date().toISOString();
       await saveUnityConfig(storagePath, config);
+      configChanged = true;
     }
 
     // Show summary
@@ -205,6 +220,7 @@ export const unityAnalyzeCommand = async (
 
     await saveUnityConfig(storagePath, config);
     console.log(`\n  Config saved to .gitnexus/unity.json`);
+    configChanged = true;
   }
 
   // Create Unity ignore filter and run analyze
@@ -213,8 +229,16 @@ export const unityAnalyzeCommand = async (
   console.log('');
 
   const { analyzeCommand } = await import('./analyze.js');
+  const shouldForceAnalyze = Boolean(
+    options?.force ||
+      options?.embeddings ||
+      options?.dropEmbeddings ||
+      options?.resetConfig ||
+      configChanged ||
+      hasUnityRelevantChanges(repoPath),
+  );
   await analyzeCommand(repoPath, {
-    force: options?.force,
+    force: shouldForceAnalyze,
     embeddings: options?.embeddings,
     dropEmbeddings: options?.dropEmbeddings,
     skills: options?.skills,

@@ -220,6 +220,16 @@ if "ctx.options?.ignoreFilter" not in scan:
 write("src/core/ingestion/pipeline-phases/scan.ts", scan)
 
 run_analyze = read("src/core/run-analyze.ts")
+run_analyze = run_analyze.replace(
+    "if (existingMeta && !options.force && existingMeta.lastCommit === currentCommit) {",
+    "if (\n"
+    "    existingMeta &&\n"
+    "    !options.force &&\n"
+    "    !options.embeddings &&\n"
+    "    !options.dropEmbeddings &&\n"
+    "    existingMeta.lastCommit === currentCommit\n"
+    "  ) {",
+)
 if "ignoreFilter?: { ignored:" not in run_analyze:
     run_analyze = replace_once(
         run_analyze,

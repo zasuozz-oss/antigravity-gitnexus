@@ -38,8 +38,8 @@ echo -e "${GREEN}  Frontend${NC}  → http://localhost:5173"
 echo -e ""
 echo -e "${YELLOW}  Press Ctrl+C to stop both${NC}\n"
 
-# Start backend (API server)
-npx -y gitnexus@latest serve &
+# Start backend (API server) from the locally linked GitNexus CLI.
+gitnexus serve &
 
 # Start frontend (Vite dev server)
 (cd "$WEB_DIR" && npm run dev) &

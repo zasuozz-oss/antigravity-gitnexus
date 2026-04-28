@@ -1,0 +1,328 @@
+#!/usr/bin/env bash
+# GitNexus upstream update for the local embedded repo.
+#
+# Usage: ./update.sh
+set -euo pipefail
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+CYAN='\033[0;36m'; DIM='\033[2m'; NC='\033[0m'
+
+info()  { echo -e "${CYAN}[INFO]${NC}  $*"; }
+ok()    { echo -e "${GREEN}  ✓${NC}  $*"; }
+warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
+err()   { echo -e "${RED}[ERROR]${NC} $*"; }
+step()  { echo -e "\n${CYAN}-- $* --${NC}"; }
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GITNEXUS_DIR="$SCRIPT_DIR/GitNexus"
+GITNEXUS_CLI_DIR="$GITNEXUS_DIR/gitnexus"
+GITNEXUS_SHARED_DIR="$GITNEXUS_DIR/gitnexus-shared"
+GITNEXUS_WEB_DIR="$GITNEXUS_DIR/gitnexus-web"
+CUSTOM_UNITY_DIR="$SCRIPT_DIR/custom/gitnexus-unity"
+UPSTREAM_REPO="https://github.com/abhigyanpatwari/GitNexus.git"
+TMP_DIR=""
+
+cleanup() {
+  if [ -n "${TMP_DIR:-}" ] && [ -d "$TMP_DIR" ]; then
+    rm -rf "$TMP_DIR"
+  fi
+}
+trap cleanup EXIT
+
+check_prereqs() {
+  step "Checking prerequisites"
+
+  for cmd in git node npm python3 rsync; do
+    if ! command -v "$cmd" &>/dev/null; then
+      err "$cmd not found"
+      exit 1
+    fi
+    ok "$cmd available"
+  done
+
+  local node_major
+  node_major=$(node -v | sed 's/v//' | cut -d. -f1)
+  if (( node_major < 20 )); then
+    err "Node >= 20 required (found $(node -v))"
+    exit 1
+  fi
+}
+
+ensure_layout() {
+  if [ ! -d "$GITNEXUS_DIR" ]; then
+    err "GitNexus directory not found at $GITNEXUS_DIR"
+    info "Run ./setup.sh first"
+    exit 1
+  fi
+
+  if [ ! -d "$GITNEXUS_CLI_DIR" ]; then
+    err "GitNexus CLI directory not found at $GITNEXUS_CLI_DIR"
+    exit 1
+  fi
+}
+
+sync_upstream() {
+  step "Syncing upstream GitNexus"
+
+  TMP_DIR="$(mktemp -d)"
+  info "Cloning $UPSTREAM_REPO"
+  git clone --depth 1 "$UPSTREAM_REPO" "$TMP_DIR" >/dev/null 2>&1
+
+  info "Updating $GITNEXUS_DIR"
+  rsync -a --delete \
+    --exclude='.git' \
+    --exclude='node_modules' \
+    --exclude='gitnexus/node_modules' \
+    --exclude='gitnexus/vendor/tree-sitter-dart/build' \
+    --exclude='gitnexus/vendor/tree-sitter-proto/build' \
+    --exclude='gitnexus-shared/node_modules' \
+    --exclude='gitnexus-web/node_modules' \
+    "$TMP_DIR/" "$GITNEXUS_DIR/"
+
+  ok "Upstream files synced"
+}
+
+apply_unity_command_patch() {
+  step "Applying local Unity command customizations"
+
+  local custom_unity_cli="$CUSTOM_UNITY_DIR/src/cli/unity-analyze.ts"
+  local custom_unity_preset="$CUSTOM_UNITY_DIR/src/config/unity-preset.ts"
+  if [ ! -f "$custom_unity_cli" ] || [ ! -f "$custom_unity_preset" ]; then
+    err "Custom Unity files are missing from $CUSTOM_UNITY_DIR"
+    exit 1
+  fi
+
+  local unity_cli="$GITNEXUS_CLI_DIR/src/cli/unity-analyze.ts"
+  local unity_preset="$GITNEXUS_CLI_DIR/src/config/unity-preset.ts"
+  mkdir -p "$(dirname "$unity_cli")" "$(dirname "$unity_preset")"
+  cp "$custom_unity_cli" "$unity_cli"
+  cp "$custom_unity_preset" "$unity_preset"
+
+  python3 - "$GITNEXUS_CLI_DIR" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+
+def read(rel: str) -> str:
+    return (root / rel).read_text()
+
+def write(rel: str, text: str) -> None:
+    (root / rel).write_text(text)
+
+def replace_once(text: str, old: str, new: str, file_name: str) -> str:
+    if old not in text:
+        return text
+    return text.replace(old, new, 1)
+
+index = read("src/cli/index.ts")
+unity_block = """// --- Unity Project Tools -------------------------------------------------
+const unity = program.command('unity').description('Unity project tools');
+
+unity
+  .command('analyze [path]')
+  .description('Index a Unity project with smart SDK detection')
+  .option('-f, --force', 'Force full re-index')
+  .option('--embeddings', 'Enable embedding generation')
+  .option(
+    '--drop-embeddings',
+    'Drop existing embeddings on rebuild. By default, Unity analysis preserves existing embeddings.',
+  )
+  .option('--skills', 'Generate repo-specific skill files from detected communities')
+  .option('--skip-agents-md', 'Skip updating the gitnexus section in AGENTS.md and CLAUDE.md')
+  .option('--no-stats', 'Omit volatile file/symbol counts from AGENTS.md and CLAUDE.md')
+  .option('--reset-config', 'Reset unity.json and re-scan')
+  .option('-v, --verbose', 'Verbose output')
+  .option(
+    '--max-file-size <kb>',
+    'Skip files larger than this (KB). Default: 512. Hard cap: 32768 (tree-sitter limit).',
+  )
+  .option(
+    '--worker-timeout <seconds>',
+    'Worker sub-batch idle timeout before retry/fallback. Default: 30.',
+  )
+  .action(createLazyAction(() => import('./unity-analyze.js'), 'unityAnalyzeCommand'));
+
+"""
+if "command('unity')" not in index:
+    marker = "  .action(createLazyAction(() => import('./analyze.js'), 'analyzeCommand'));\n\n"
+    if marker not in index:
+        raise SystemExit("Cannot patch src/cli/index.ts: analyze command marker not found")
+    index = index.replace(marker, marker + unity_block, 1)
+write("src/cli/index.ts", index)
+
+walker = read("src/core/ingestion/filesystem-walker.ts")
+walker = replace_once(
+    walker,
+    "export const walkRepositoryPaths = async (\n  repoPath: string,\n  onProgress?: (current: number, total: number, filePath: string) => void,\n): Promise<ScannedFile[]> => {",
+    "export const walkRepositoryPaths = async (\n  repoPath: string,\n  onProgress?: (current: number, total: number, filePath: string) => void,\n  customIgnoreFilter?: { ignored: (p: any) => boolean; childrenIgnored: (p: any) => boolean },\n): Promise<ScannedFile[]> => {",
+    "src/core/ingestion/filesystem-walker.ts",
+)
+walker = replace_once(
+    walker,
+    "  const ignoreFilter = await createIgnoreFilter(repoPath);",
+    "  const ignoreFilter = customIgnoreFilter ?? (await createIgnoreFilter(repoPath));",
+    "src/core/ingestion/filesystem-walker.ts",
+)
+write("src/core/ingestion/filesystem-walker.ts", walker)
+
+pipeline = read("src/core/ingestion/pipeline.ts")
+if "ignoreFilter?: { ignored:" not in pipeline:
+    pipeline = replace_once(
+        pipeline,
+        "  /** Force sequential parsing (no worker pool). Useful for testing the sequential path. */\n  skipWorkers?: boolean;\n",
+        "  /** Force sequential parsing (no worker pool). Useful for testing the sequential path. */\n  skipWorkers?: boolean;\n  /** Custom ignore filter, used by project-specific commands such as Unity analysis. */\n  ignoreFilter?: { ignored: (p: any) => boolean; childrenIgnored: (p: any) => boolean };\n",
+        "src/core/ingestion/pipeline.ts",
+    )
+write("src/core/ingestion/pipeline.ts", pipeline)
+
+scan = read("src/core/ingestion/pipeline-phases/scan.ts")
+if "ctx.options?.ignoreFilter" not in scan:
+    old = """    const scannedFiles = await walkRepositoryPaths(ctx.repoPath, (current, total, filePath) => {
+      const scanProgress = Math.round((current / total) * 15);
+      ctx.onProgress({
+        phase: 'extracting',
+        percent: scanProgress,
+        message: 'Scanning repository...',
+        detail: filePath,
+        stats: {
+          filesProcessed: current,
+          totalFiles: total,
+          nodesCreated: ctx.graph.nodeCount,
+        },
+      });
+    });"""
+    new = """    const scannedFiles = await walkRepositoryPaths(
+      ctx.repoPath,
+      (current, total, filePath) => {
+        const scanProgress = Math.round((current / total) * 15);
+        ctx.onProgress({
+          phase: 'extracting',
+          percent: scanProgress,
+          message: 'Scanning repository...',
+          detail: filePath,
+          stats: {
+            filesProcessed: current,
+            totalFiles: total,
+            nodesCreated: ctx.graph.nodeCount,
+          },
+        });
+      },
+      ctx.options?.ignoreFilter,
+    );"""
+    if old not in scan:
+        raise SystemExit("Cannot patch scan.ts: walkRepositoryPaths marker not found")
+    scan = scan.replace(old, new, 1)
+write("src/core/ingestion/pipeline-phases/scan.ts", scan)
+
+run_analyze = read("src/core/run-analyze.ts")
+if "ignoreFilter?: { ignored:" not in run_analyze:
+    run_analyze = replace_once(
+        run_analyze,
+        "  dropEmbeddings?: boolean;\n  skipGit?: boolean;\n",
+        "  dropEmbeddings?: boolean;\n  skipGit?: boolean;\n  /** Custom ignore filter, used by project-specific commands such as Unity analysis. */\n  ignoreFilter?: { ignored: (p: any) => boolean; childrenIgnored: (p: any) => boolean };\n",
+        "src/core/run-analyze.ts",
+    )
+if "{ ignoreFilter: options.ignoreFilter }" not in run_analyze:
+    old = """  const pipelineResult = await runPipelineFromRepo(repoPath, (p) => {
+    const phaseLabel = PHASE_LABELS[p.phase] || p.phase;
+    const scaled = Math.round(p.percent * 0.6);
+    const message = p.detail ? `${p.message || phaseLabel} (${p.detail})` : p.message || phaseLabel;
+    progress(p.phase, scaled, message);
+  });"""
+    new = """  const pipelineResult = await runPipelineFromRepo(
+    repoPath,
+    (p) => {
+      const phaseLabel = PHASE_LABELS[p.phase] || p.phase;
+      const scaled = Math.round(p.percent * 0.6);
+      const message = p.detail
+        ? `${p.message || phaseLabel} (${p.detail})`
+        : p.message || phaseLabel;
+      progress(p.phase, scaled, message);
+    },
+    { ignoreFilter: options.ignoreFilter },
+  );"""
+    if old not in run_analyze:
+        raise SystemExit("Cannot patch run-analyze.ts: runPipelineFromRepo marker not found")
+    run_analyze = run_analyze.replace(old, new, 1)
+write("src/core/run-analyze.ts", run_analyze)
+
+analyze = read("src/cli/analyze.ts")
+if "ignoreFilter?: { ignored:" not in analyze:
+    analyze = replace_once(
+        analyze,
+        "  /** Index the folder even when no .git directory is present. */\n  skipGit?: boolean;\n",
+        "  /** Index the folder even when no .git directory is present. */\n  skipGit?: boolean;\n  /** Custom ignore filter, used by project-specific commands such as Unity analysis. */\n  ignoreFilter?: { ignored: (p: any) => boolean; childrenIgnored: (p: any) => boolean };\n",
+        "src/cli/analyze.ts",
+    )
+if "ignoreFilter: options?.ignoreFilter" not in analyze:
+    analyze = replace_once(
+        analyze,
+        "        skipGit: options?.skipGit,\n",
+        "        skipGit: options?.skipGit,\n        ignoreFilter: options?.ignoreFilter,\n",
+        "src/cli/analyze.ts",
+    )
+write("src/cli/analyze.ts", analyze)
+PY
+
+  ok "Unity custom files copied and command patch applied"
+}
+
+install_dependencies() {
+  step "Installing dependencies"
+
+  if [ -d "$GITNEXUS_SHARED_DIR" ]; then
+    (cd "$GITNEXUS_SHARED_DIR" && npm install)
+    ok "Shared dependencies installed"
+  fi
+
+  if [ -d "$GITNEXUS_WEB_DIR" ]; then
+    (cd "$GITNEXUS_WEB_DIR" && npm install)
+    ok "Web UI dependencies installed"
+  fi
+
+  (cd "$GITNEXUS_CLI_DIR" && npm install)
+  ok "CLI dependencies installed"
+}
+
+build_and_link_cli() {
+  step "Building and linking CLI"
+
+  local old_ver
+  old_ver=$(gitnexus --version 2>/dev/null || echo "unknown")
+
+  (cd "$GITNEXUS_CLI_DIR" && npm run build && npm link >/dev/null 2>&1)
+
+  local new_ver
+  new_ver=$(gitnexus --version 2>/dev/null || echo "unknown")
+  if [ "$old_ver" = "$new_ver" ]; then
+    ok "CLI rebuilt (v${new_ver})"
+  else
+    ok "CLI updated: v${old_ver} -> v${new_ver}"
+  fi
+}
+
+main() {
+  if [ "${1:-}" = "--apply-custom-only" ]; then
+    ensure_layout
+    apply_unity_command_patch
+    return
+  fi
+
+  echo -e "\n${CYAN}GitNexus upstream update${NC}"
+
+  check_prereqs
+  ensure_layout
+  sync_upstream
+  apply_unity_command_patch
+  install_dependencies
+  build_and_link_cli
+
+  echo ""
+  echo -e "${GREEN}Update complete${NC}"
+  echo -e "  ${DIM}Unity${NC}    gitnexus unity analyze --embeddings --skills"
+  echo -e "  ${DIM}Generic${NC}  gitnexus analyze --embeddings --skills"
+  echo -e "  ${DIM}Web UI${NC}   ./web-ui.sh"
+}
+
+main "$@"

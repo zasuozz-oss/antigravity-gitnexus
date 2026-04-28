@@ -64,6 +64,33 @@ program
   )
   .action(createLazyAction(() => import('./analyze.js'), 'analyzeCommand'));
 
+// --- Unity Project Tools -------------------------------------------------
+const unity = program.command('unity').description('Unity project tools');
+
+unity
+  .command('analyze [path]')
+  .description('Index a Unity project with smart SDK detection')
+  .option('-f, --force', 'Force full re-index')
+  .option('--embeddings', 'Enable embedding generation')
+  .option(
+    '--drop-embeddings',
+    'Drop existing embeddings on rebuild. By default, Unity analysis preserves existing embeddings.',
+  )
+  .option('--skills', 'Generate repo-specific skill files from detected communities')
+  .option('--skip-agents-md', 'Skip updating the gitnexus section in AGENTS.md and CLAUDE.md')
+  .option('--no-stats', 'Omit volatile file/symbol counts from AGENTS.md and CLAUDE.md')
+  .option('--reset-config', 'Reset unity.json and re-scan')
+  .option('-v, --verbose', 'Verbose output')
+  .option(
+    '--max-file-size <kb>',
+    'Skip files larger than this (KB). Default: 512. Hard cap: 32768 (tree-sitter limit).',
+  )
+  .option(
+    '--worker-timeout <seconds>',
+    'Worker sub-batch idle timeout before retry/fallback. Default: 30.',
+  )
+  .action(createLazyAction(() => import('./unity-analyze.js'), 'unityAnalyzeCommand'));
+
 program
   .command('index [path...]')
   .description(

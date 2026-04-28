@@ -70,6 +70,8 @@ export interface AnalyzeOptions {
   noStats?: boolean;
   /** Index the folder even when no .git directory is present. */
   skipGit?: boolean;
+  /** Custom ignore filter, used by project-specific commands such as Unity analysis. */
+  ignoreFilter?: { ignored: (p: any) => boolean; childrenIgnored: (p: any) => boolean };
   /**
    * Override the default basename-derived registry `name` with a
    * user-supplied alias (#829). Disambiguates repos whose paths share a
@@ -248,6 +250,7 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
         embeddings: options?.embeddings,
         dropEmbeddings: options?.dropEmbeddings,
         skipGit: options?.skipGit,
+        ignoreFilter: options?.ignoreFilter,
         skipAgentsMd: options?.skipAgentsMd,
         noStats: options?.noStats,
         registryName: options?.name,

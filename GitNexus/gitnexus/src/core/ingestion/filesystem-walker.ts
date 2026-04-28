@@ -30,8 +30,9 @@ const READ_CONCURRENCY = 32;
 export const walkRepositoryPaths = async (
   repoPath: string,
   onProgress?: (current: number, total: number, filePath: string) => void,
+  customIgnoreFilter?: { ignored: (p: any) => boolean; childrenIgnored: (p: any) => boolean },
 ): Promise<ScannedFile[]> => {
-  const ignoreFilter = await createIgnoreFilter(repoPath);
+  const ignoreFilter = customIgnoreFilter ?? (await createIgnoreFilter(repoPath));
   const maxFileSizeBytes = getMaxFileSizeBytes();
 
   const filtered = await glob('**/*', {

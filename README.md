@@ -1,9 +1,9 @@
-# GitNexus for Antigravity
+# GitNexus MCP Setup
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 **🌐 [Tiếng Việt](README.vi.md)**
 
-> Auto-setup [GitNexus](https://github.com/abhigyanpatwari/GitNexus) MCP server for [Antigravity](https://github.com/google-deepmind/antigravity).
+> Auto-setup [GitNexus](https://github.com/abhigyanpatwari/GitNexus) MCP server for Antigravity, Claude Desktop, and Codex.
 
 ---
 
@@ -11,7 +11,7 @@
 
 [GitNexus](https://github.com/abhigyanpatwari/GitNexus) — by [Abhigyan Patwari](https://github.com/abhigyanpatwari) — is a **code intelligence engine** that builds a knowledge graph from any codebase.
 
-It parses ASTs (Tree-sitter), extracts every function, class, dependency, and call chain, then exposes it via [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). This setup script configures GitNexus specifically for **Antigravity** so you get code intelligence tools directly in your AI assistant.
+It parses ASTs (Tree-sitter), extracts every function, class, dependency, and call chain, then exposes it via [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). This setup configures GitNexus for **Antigravity**, **Claude Desktop**, and **Codex** so you get code intelligence tools directly in your AI assistant.
 
 Supports 13 languages: TypeScript, JavaScript, Python, Java, Kotlin, C#, Go, Rust, PHP, Ruby, Swift, C, C++.
 
@@ -44,14 +44,15 @@ cd gitnexus-setup
 ./setup.sh
 ```
 
-The script does four things:
+The script does five things:
 
-1. **Installs** `gitnexus` globally via `npm install -g gitnexus@latest`
+1. **Builds and links** the local `GitNexus/gitnexus` CLI with `npm link`
 2. **Configures** Antigravity MCP (`~/.gemini/antigravity/mcp_config.json`)
-3. **Installs** `gitnexus-sync` to `~/.local/bin/` — syncs GitNexus skills to Antigravity format
-4. **Clones** the GitNexus repo (via `gh fork` or `git clone`) and installs Web UI dependencies
+3. **Configures** Claude Desktop MCP (`~/Library/Application Support/Claude/claude_desktop_config.json`)
+4. **Configures** Codex MCP (`~/.codex/config.toml`)
+5. **Installs** `gitnexus-sync` to `~/.local/bin/` and prepares the Web UI
 
-After completion → **restart Antigravity** to load the MCP server.
+After completion → restart Antigravity, Claude Desktop, and Codex to load the MCP server.
 
 ---
 
@@ -99,9 +100,9 @@ This starts both the **backend** (`http://127.0.0.1:4747`) and **frontend** (`ht
 
 > **Note:** Requires `./setup.sh` to have been run first (clones GitNexus repo and installs dependencies).
 
-### 5. Use in Antigravity
+### 5. Use in MCP clients
 
-Once indexed, Antigravity automatically has access to these MCP tools when working with that codebase:
+Once indexed, configured MCP clients automatically have access to these tools when working with that codebase:
 
 ```
 # Find execution flows by concept
@@ -140,11 +141,13 @@ gitnexus_rename({symbol_name: "oldName", new_name: "newName", dry_run: true})
 
 ```
 gitnexus-setup/
-├── setup.sh          # Main setup — global install, MCP config, sync install, Web UI clone
+├── setup.sh          # Main setup — local build/link, MCP config, sync install
+├── update.sh         # Pull upstream GitNexus, apply local custom files, rebuild local CLI
+├── custom/           # Local custom files copied into GitNexus/ after upstream sync
 ├── sync-skills.sh    # Bridge .claude/skills/ → .agents/skills/ (Antigravity format)
 ├── web-ui.sh         # Launch backend + frontend in one command
 ├── test-sync.sh      # Test suite for sync-skills.sh (6 tests)
-├── GitNexus/         # Cloned GitNexus repo (gitignored, created by setup.sh)
+├── GitNexus/         # Embedded GitNexus upstream snapshot
 ├── LICENSE           # MIT
 └── README.md
 ```
@@ -154,10 +157,10 @@ gitnexus-setup/
 ## Update
 
 ```bash
-./setup.sh update
+./update.sh
 ```
 
-Updates gitnexus to the latest version and re-validates MCP config.
+Updates the embedded GitNexus snapshot from upstream, then copies custom files from `custom/gitnexus-unity/` to restore `gitnexus unity analyze`, rebuilds the local CLI, and relinks `gitnexus`.
 
 ---
 
@@ -175,11 +178,20 @@ Covers: flat skills, generated skills, frontmatter rewriting, idempotency, grace
 
 ## How it works
 
-The script installs gitnexus globally and configures `~/.gemini/antigravity/mcp_config.json`:
+The setup script builds and links the local CLI:
 
 ```bash
-npm install -g gitnexus@latest
+cd GitNexus/gitnexus-shared
+npm install
+cd ../gitnexus-web
+npm install
+cd ../gitnexus
+npm install
+npm run build
+npm link
 ```
+
+It configures each MCP client with the same command:
 
 ```json
 {
@@ -192,15 +204,24 @@ npm install -g gitnexus@latest
 }
 ```
 
-Uses globally installed `gitnexus` command instead of `npx` to avoid a known npm v11 arborist bug with git dependencies (`tree-sitter-dart`). To update: `npm install -g gitnexus@latest`.
+Codex uses the equivalent TOML block:
+
+```toml
+[mcp_servers.gitnexus]
+command = "gitnexus"
+args = [ "mcp" ]
+```
+
+`./update.sh` pulls `abhigyanpatwari/GitNexus` into `GitNexus/`, then applies local customizations from `custom/gitnexus-unity/`. This keeps custom Unity files out of the upstream snapshot until after the sync step, so future upstream updates do not permanently overwrite them.
 
 ---
 
 ## Requirements
 
-- **Node.js** ≥ 18 (with npm)
-- **python3** (optional, for auto-config MCP)
-- **gh** CLI (optional, for forking instead of cloning)
+- **Node.js** ≥ 20 (with npm)
+- **python3** (for MCP config and local custom patching)
+- **rsync** (for `./update.sh`)
+- **gh** CLI (optional, for first-time fork/clone fallback)
 - **macOS** or **Linux**
 
 ---

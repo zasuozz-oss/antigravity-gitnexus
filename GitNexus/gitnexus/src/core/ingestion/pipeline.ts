@@ -44,6 +44,8 @@ export interface PipelineOptions {
   skipGraphPhases?: boolean;
   /** Force sequential parsing (no worker pool). Useful for testing the sequential path. */
   skipWorkers?: boolean;
+  /** Custom ignore filter, used by project-specific commands such as Unity analysis. */
+  ignoreFilter?: { ignored: (p: any) => boolean; childrenIgnored: (p: any) => boolean };
   /**
    * @internal Test-only override for worker-pool gating thresholds.
    * When unset, production defaults apply (15 files OR 512 KB total bytes).

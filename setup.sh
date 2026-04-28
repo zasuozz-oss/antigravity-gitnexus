@@ -24,6 +24,10 @@ GITNEXUS_DIR="$SCRIPT_DIR/GitNexus"
 GITNEXUS_WEB_DIR="$GITNEXUS_DIR/gitnexus-web"
 GITNEXUS_CLI_DIR="$GITNEXUS_DIR/gitnexus"
 GITNEXUS_SHARED_DIR="$GITNEXUS_DIR/gitnexus-shared"
+GITNEXUS_SKILLS_DIR="$GITNEXUS_CLI_DIR/skills"
+ANTIGRAVITY_SKILLS_DIR="$HOME/.gemini/antigravity/skills"
+CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
+CODEX_SKILLS_DIR="${CODEX_HOME:-$HOME/.codex}/skills"
 UPSTREAM_REPO="https://github.com/abhigyanpatwari/GitNexus.git"
 
 # ── Prereqs ──────────────────────────────────────────────────
@@ -49,6 +53,11 @@ check_prereqs() {
     err "git not found"; exit 1
   fi
   ok "git available"
+
+  if ! command -v rsync &>/dev/null; then
+    err "rsync not found"; exit 1
+  fi
+  ok "rsync available"
 
   if ! command -v python3 &>/dev/null; then
     err "python3 not found"; exit 1
@@ -249,30 +258,53 @@ with open(config_path, 'w') as f:
   esac
 }
 
-# ── Install gitnexus-sync to PATH ────────────────────────────
-install_sync_script() {
-  step "Installing gitnexus-sync"
+# ── Install Global Skills ───────────────────────────────────
+install_skills_to() {
+  local target_dir="$1"
+  local label="$2"
+  local installed=0
 
-  local script_dir="$SCRIPT_DIR"
-  local src="$script_dir/sync-skills.sh"
-  local dest_dir="$HOME/.local/bin"
-  local dest="$dest_dir/gitnexus-sync"
+  mkdir -p "$target_dir"
 
-  if [ ! -f "$src" ]; then
-    warn "sync-skills.sh not found — skipping sync script install"
+  shopt -s nullglob
+  local skill_file
+  for skill_file in "$GITNEXUS_SKILLS_DIR"/*.md; do
+    local skill_name
+    skill_name="$(basename "$skill_file" .md)"
+    mkdir -p "$target_dir/$skill_name"
+    cp "$skill_file" "$target_dir/$skill_name/SKILL.md"
+    installed=$((installed + 1))
+  done
+
+  local skill_dir
+  for skill_dir in "$GITNEXUS_SKILLS_DIR"/*/; do
+    [ -f "$skill_dir/SKILL.md" ] || continue
+    local skill_name
+    skill_name="$(basename "$skill_dir")"
+    mkdir -p "$target_dir/$skill_name"
+    rsync -a "$skill_dir/" "$target_dir/$skill_name/"
+    installed=$((installed + 1))
+  done
+  shopt -u nullglob
+
+  if [ "$installed" -eq 0 ]; then
+    warn "No GitNexus skills found for $label"
+  else
+    ok "$label global skills synced ($installed skills → $target_dir)"
+  fi
+}
+
+install_global_skills() {
+  step "Installing GitNexus global skills"
+
+  if [ ! -d "$GITNEXUS_SKILLS_DIR" ]; then
+    warn "GitNexus skills directory not found at $GITNEXUS_SKILLS_DIR"
     return
   fi
 
-  mkdir -p "$dest_dir"
-  cp "$src" "$dest"
-  chmod +x "$dest"
-  ok "Installed gitnexus-sync → $dest"
-
-  # Check if ~/.local/bin is in PATH
-  if ! echo "$PATH" | tr ':' '\n' | grep -qx "$dest_dir"; then
-    warn "$dest_dir is not in PATH"
-    info "Add to your shell profile:  export PATH=\"\$HOME/.local/bin:\$PATH\""
-  fi
+  install_skills_to "$ANTIGRAVITY_SKILLS_DIR" "Antigravity"
+  install_skills_to "$CLAUDE_SKILLS_DIR" "Claude"
+  install_skills_to "$CODEX_SKILLS_DIR" "Codex"
 }
 
 # ── Fork/clone GitNexus for Web UI ────────────────────────────
@@ -356,8 +388,8 @@ main() {
   configure_mcp
   configure_claude_desktop
   configure_codex
-  install_sync_script
   fork_web_ui
+  install_global_skills
   apply_gitnexus_customizations
   setup_cli_build
 
@@ -366,9 +398,8 @@ main() {
   echo -e "${GREEN}  Setup complete!${NC}"
   echo -e "${GREEN}═══════════════════════════════════════════${NC}"
   echo ""
-  echo -e "  ${DIM}Index Unity${NC}    cd your-project && gitnexus unity analyze --embeddings --skills"
-  echo -e "  ${DIM}Index generic${NC}  cd your-project && gitnexus analyze --embeddings --skills"
-  echo -e "  ${DIM}Sync skills${NC}    gitnexus-sync"
+  echo -e "  ${DIM}Index Unity${NC}    cd your-project && gitnexus unity analyze --embeddings"
+  echo -e "  ${DIM}Index generic${NC}  cd your-project && gitnexus analyze"
   echo -e "  ${DIM}Web UI${NC}         ./web-ui.sh"
   echo -e "  ${DIM}Update${NC}         ./update.sh"
   echo -e "  ${DIM}Re-run setup${NC}   ./setup.sh"

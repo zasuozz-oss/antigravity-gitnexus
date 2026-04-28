@@ -50,7 +50,7 @@ The script does five things:
 2. **Configures** Antigravity MCP (`~/.gemini/antigravity/mcp_config.json`)
 3. **Configures** Claude Desktop MCP (`~/Library/Application Support/Claude/claude_desktop_config.json`)
 4. **Configures** Codex MCP (`~/.codex/config.toml`)
-5. **Installs** `gitnexus-sync` to `~/.local/bin/` and prepares the Web UI
+5. **Installs** GitNexus global skills for Antigravity, Claude, and Codex, then prepares the Web UI
 
 After completion → restart Antigravity, Claude Desktop, and Codex to load the MCP server.
 
@@ -64,10 +64,10 @@ Go to any project directory and index it:
 
 ```bash
 cd your-project
-gitnexus analyze --skills
+gitnexus analyze
 ```
 
-This creates a knowledge graph in `.gitnexus/` (gitignored). The `--skills` flag generates skill files for AI agents. Run once per repo, re-run when code changes.
+This creates a knowledge graph in `.gitnexus/` (gitignored). Run once per repo, re-run when code changes. The legacy `--skills` flag is accepted as a no-op, but GitNexus no longer writes project skill folders during analyze.
 
 ### 2. Index a Unity project
 
@@ -75,18 +75,20 @@ For Unity games (like SDU), GitNexus has a specialized Unity parser that automat
 
 ```bash
 cd your-unity-project
-gitnexus unity analyze --embeddings --skills
+gitnexus unity analyze --embeddings
 ```
 
-### 3. Sync skills to Antigravity
+### 3. Global skills
 
-GitNexus writes skills to `.claude/skills/` (Claude Code format). Run `gitnexus-sync` to convert them to Antigravity format:
+`./setup.sh` installs bundled GitNexus skills globally:
 
-```bash
-gitnexus-sync
+```text
+~/.gemini/antigravity/skills/gitnexus-*/SKILL.md
+~/.claude/skills/gitnexus-*/SKILL.md
+${CODEX_HOME:-~/.codex}/skills/gitnexus-*/SKILL.md
 ```
 
-This copies skills to `.agents/skills/gitnexus-*/SKILL.md` with proper YAML frontmatter. Supports both flat files (`.claude/skills/*.md`) and generated skills (`.claude/skills/generated/*/SKILL.md`).
+Analyze commands do not create `.claude/skills/` or `.agents/skills/` inside each indexed project.
 
 ### 4. Launch the Web UI
 
@@ -141,10 +143,10 @@ gitnexus_rename({symbol_name: "oldName", new_name: "newName", dry_run: true})
 
 ```
 gitnexus-setup/
-├── setup.sh          # Main setup — local build/link, MCP config, sync install
+├── setup.sh          # Main setup — local build/link, MCP config, global skills
 ├── update.sh         # Pull upstream GitNexus, apply local custom files, rebuild local CLI
 ├── custom/           # Local custom files copied into GitNexus/ after upstream sync
-├── sync-skills.sh    # Bridge .claude/skills/ → .agents/skills/ (Antigravity format)
+├── sync-skills.sh    # Legacy project skill sync helper
 ├── web-ui.sh         # Launch backend + frontend in one command
 ├── test-sync.sh      # Test suite for sync-skills.sh (6 tests)
 ├── GitNexus/         # Embedded GitNexus upstream snapshot
@@ -166,13 +168,13 @@ Updates the embedded GitNexus snapshot from upstream, then copies custom files f
 
 ## Testing
 
-Run the sync-skills test suite:
+Run the legacy sync-skills test suite:
 
 ```bash
 bash test-sync.sh
 ```
 
-Covers: flat skills, generated skills, frontmatter rewriting, idempotency, graceful error handling, and mixed skill layouts.
+Covers the legacy project-skill bridge: flat skills, generated skills, frontmatter rewriting, idempotency, graceful error handling, and mixed skill layouts.
 
 ---
 
@@ -210,6 +212,14 @@ Codex uses the equivalent TOML block:
 [mcp_servers.gitnexus]
 command = "gitnexus"
 args = [ "mcp" ]
+```
+
+It also copies bundled GitNexus skills into Antigravity, Claude, and Codex global skill folders:
+
+```text
+~/.gemini/antigravity/skills/
+~/.claude/skills/
+${CODEX_HOME:-~/.codex}/skills/
 ```
 
 `./update.sh` pulls `abhigyanpatwari/GitNexus` into `GitNexus/`, then applies local customizations from `custom/gitnexus-unity/`. This keeps custom Unity files out of the upstream snapshot until after the sync step, so future upstream updates do not permanently overwrite them.

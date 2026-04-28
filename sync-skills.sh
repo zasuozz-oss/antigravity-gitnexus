@@ -92,7 +92,7 @@ write_skill_file() {
 main() {
   if [ ! -d "$CLAUDE_SKILLS" ]; then
     err "No .claude/skills/ found in $PROJECT_DIR"
-    info "Run 'npx gitnexus analyze' first to generate skills."
+    info "This legacy helper only syncs pre-existing project skills."
     exit 1
   fi
 

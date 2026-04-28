@@ -50,7 +50,7 @@ Script làm 5 việc:
 2. **Cấu hình** Antigravity MCP (`~/.gemini/antigravity/mcp_config.json`)
 3. **Cấu hình** Claude Desktop MCP (`~/Library/Application Support/Claude/claude_desktop_config.json`)
 4. **Cấu hình** Codex MCP (`~/.codex/config.toml`)
-5. **Cài đặt** `gitnexus-sync` vào `~/.local/bin/` và chuẩn bị Web UI
+5. **Cài GitNexus global skills** cho Antigravity, Claude và Codex, rồi chuẩn bị Web UI
 
 Sau khi xong → restart Antigravity, Claude Desktop và Codex để load MCP server mới.
 
@@ -64,10 +64,10 @@ Vào thư mục project bất kỳ và index:
 
 ```bash
 cd your-project
-gitnexus analyze --skills
+gitnexus analyze
 ```
 
-GitNexus tạo knowledge graph trong `.gitnexus/` (đã gitignore). Flag `--skills` tạo skill files cho AI agent. Chạy 1 lần, re-analyze khi code thay đổi.
+GitNexus tạo knowledge graph trong `.gitnexus/` (đã gitignore). Chạy 1 lần, re-analyze khi code thay đổi. Flag cũ `--skills` vẫn được nhận nhưng là no-op; analyze không còn tạo project skill folders.
 
 ### 2. Index Unity project
 
@@ -75,18 +75,20 @@ Unity dùng command riêng để tự bỏ qua SDK, plugin nặng và asset/gene
 
 ```bash
 cd your-unity-project
-gitnexus unity analyze --embeddings --skills
+gitnexus unity analyze --embeddings
 ```
 
-### 3. Đồng bộ skill sang Antigravity
+### 3. Global skills
 
-GitNexus ghi skill vào `.claude/skills/` (định dạng Claude Code). Chạy `gitnexus-sync` để chuyển sang định dạng Antigravity:
+`./setup.sh` cài bundled GitNexus skills trực tiếp vào global folders:
 
-```bash
-gitnexus-sync
+```text
+~/.gemini/antigravity/skills/gitnexus-*/SKILL.md
+~/.claude/skills/gitnexus-*/SKILL.md
+${CODEX_HOME:-~/.codex}/skills/gitnexus-*/SKILL.md
 ```
 
-Skill sẽ được copy sang `.agents/skills/gitnexus-*/SKILL.md` kèm YAML frontmatter chuẩn. Hỗ trợ cả file phẳng (`.claude/skills/*.md`) và skill sinh tự động (`.claude/skills/generated/*/SKILL.md`).
+Các lệnh analyze không còn tạo `.claude/skills/` hoặc `.agents/skills/` bên trong từng project được index.
 
 ### 4. Khởi chạy Web UI
 
@@ -141,10 +143,10 @@ gitnexus_rename({symbol_name: "oldName", new_name: "newName", dry_run: true})
 
 ```
 gitnexus-setup/
-├── setup.sh          # Setup chính — build/link local, MCP config, cài sync
+├── setup.sh          # Setup chính — build/link local, MCP config, global skills
 ├── update.sh         # Sync upstream GitNexus, apply custom files, rebuild CLI
 ├── custom/           # Custom files được copy vào GitNexus/ sau khi sync upstream
-├── sync-skills.sh    # Chuyển .claude/skills/ → .agents/skills/ (định dạng Antigravity)
+├── sync-skills.sh    # Helper legacy để sync project skills
 ├── web-ui.sh         # Khởi chạy backend + frontend bằng 1 lệnh
 ├── test-sync.sh      # Bộ test cho sync-skills.sh (6 test cases)
 ├── GitNexus/         # Snapshot upstream GitNexus được vendored local
@@ -166,13 +168,13 @@ Cập nhật `GitNexus/` từ upstream, sau đó copy custom files từ `custom/
 
 ## Chạy test
 
-Chạy bộ test cho sync-skills:
+Chạy bộ test legacy cho sync-skills:
 
 ```bash
 bash test-sync.sh
 ```
 
-Bao gồm: flat skills, generated skills, ghi đè frontmatter, idempotency, xử lý lỗi, và bố cục skill hỗn hợp.
+Bao gồm luồng legacy project-skill bridge: flat skills, generated skills, ghi đè frontmatter, idempotency, xử lý lỗi, và bố cục skill hỗn hợp.
 
 ---
 
@@ -210,6 +212,14 @@ Codex dùng TOML tương đương:
 [mcp_servers.gitnexus]
 command = "gitnexus"
 args = [ "mcp" ]
+```
+
+Script cũng copy bundled GitNexus skills vào global skill folders của Antigravity, Claude và Codex:
+
+```text
+~/.gemini/antigravity/skills/
+~/.claude/skills/
+${CODEX_HOME:-~/.codex}/skills/
 ```
 
 `./update.sh` sync `abhigyanpatwari/GitNexus` vào `GitNexus/`, rồi mới apply custom từ `custom/gitnexus-unity/`. Nhờ vậy custom Unity không bị mất vĩnh viễn khi update upstream.

@@ -5,7 +5,7 @@
  *
  * Delegates core analysis to the shared runFullAnalysis orchestrator.
  * This CLI wrapper handles: heap management, progress bar, SIGINT,
- * skill generation (--skills), summary output, and process.exit().
+ * backward-compatible --skills handling, summary output, and process.exit().
  */
 
 import path from 'path';
@@ -14,7 +14,6 @@ import v8 from 'v8';
 import cliProgress from 'cli-progress';
 import { closeLbug } from '../core/lbug/lbug-adapter.js';
 import {
-  getStoragePaths,
   getGlobalRegistryPath,
   RegistryNameCollisionError,
 } from '../storage/repo-manager.js';
@@ -157,7 +156,8 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
   }
 
   // KuzuDB migration cleanup is handled by runFullAnalysis internally.
-  // Note: --skills is handled after runFullAnalysis using the returned pipelineResult.
+  // Note: --skills is kept as a backward-compatible no-op. GitNexus skills are
+  // installed globally by setup, not generated into each project.
 
   if (process.env.GITNEXUS_NO_GITIGNORE) {
     console.log(
@@ -243,10 +243,7 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
     const result = await runFullAnalysis(
       repoPath,
       {
-        // Pipeline re-index — OR'd with --skills because skill generation
-        // needs a fresh pipelineResult. Has no bearing on the registry
-        // collision guard (see allowDuplicateName below).
-        force: options?.force || options?.skills,
+        force: options?.force,
         embeddings: options?.embeddings,
         dropEmbeddings: options?.dropEmbeddings,
         skipGit: options?.skipGit,
@@ -281,53 +278,9 @@ export const analyzeCommand = async (inputPath?: string, options?: AnalyzeOption
       return;
     }
 
-    // Skill generation (CLI-only, uses pipeline result from analysis)
-    if (options?.skills && result.pipelineResult) {
-      updateBar(99, 'Generating skill files...');
-      try {
-        const { generateSkillFiles } = await import('./skill-gen.js');
-        const { generateAIContextFiles } = await import('./ai-context.js');
-        const skillResult = await generateSkillFiles(
-          repoPath,
-          result.repoName,
-          result.pipelineResult,
-        );
-        if (skillResult.skills.length > 0) {
-          barLog(`  Generated ${skillResult.skills.length} skill files`);
-          // Re-generate AI context files now that we have skill info
-          const s = result.stats;
-          const communityResult = result.pipelineResult?.communityResult;
-          let aggregatedClusterCount = 0;
-          if (communityResult?.communities) {
-            const groups = new Map<string, number>();
-            for (const c of communityResult.communities) {
-              const label = c.heuristicLabel || c.label || 'Unknown';
-              groups.set(label, (groups.get(label) || 0) + c.symbolCount);
-            }
-            aggregatedClusterCount = Array.from(groups.values()).filter(
-              (count: number) => count >= 5,
-            ).length;
-          }
-          const { storagePath: sp } = getStoragePaths(repoPath);
-          await generateAIContextFiles(
-            repoPath,
-            sp,
-            result.repoName,
-            {
-              files: s.files ?? 0,
-              nodes: s.nodes ?? 0,
-              edges: s.edges ?? 0,
-              communities: s.communities,
-              clusters: aggregatedClusterCount,
-              processes: s.processes,
-            },
-            skillResult.skills,
-            { skipAgentsMd: options?.skipAgentsMd, noStats: options?.noStats },
-          );
-        }
-      } catch {
-        /* best-effort */
-      }
+    if (options?.skills) {
+      updateBar(99, 'Skipping project skill generation...');
+      barLog('  --skills is deprecated: GitNexus skills are installed globally by setup.');
     }
 
     const totalTime = ((Date.now() - t0) / 1000).toFixed(1);

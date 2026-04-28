@@ -128,7 +128,7 @@ unity
     '--drop-embeddings',
     'Drop existing embeddings on rebuild. By default, Unity analysis preserves existing embeddings.',
   )
-  .option('--skills', 'Generate repo-specific skill files from detected communities')
+  .option('--skills', 'Deprecated no-op; GitNexus skills are installed globally by setup')
   .option('--skip-agents-md', 'Skip updating the gitnexus section in AGENTS.md and CLAUDE.md')
   .option('--no-stats', 'Omit volatile file/symbol counts from AGENTS.md and CLAUDE.md')
   .option('--reset-config', 'Reset unity.json and re-scan')
@@ -149,6 +149,10 @@ if "command('unity')" not in index:
     if marker not in index:
         raise SystemExit("Cannot patch src/cli/index.ts: analyze command marker not found")
     index = index.replace(marker, marker + unity_block, 1)
+index = index.replace(
+    ".option('--skills', 'Generate repo-specific skill files from detected communities')",
+    ".option('--skills', 'Deprecated no-op; GitNexus skills are installed globally by setup')",
+)
 write("src/cli/index.ts", index)
 
 walker = read("src/core/ingestion/filesystem-walker.ts")
@@ -248,6 +252,16 @@ if "{ ignoreFilter: options.ignoreFilter }" not in run_analyze:
 write("src/core/run-analyze.ts", run_analyze)
 
 analyze = read("src/cli/analyze.ts")
+analyze = analyze.replace(
+    " * skill generation (--skills), summary output, and process.exit().",
+    " * backward-compatible --skills handling, summary output, and process.exit().",
+)
+analyze = analyze.replace("  getStoragePaths,\n  getGlobalRegistryPath,\n", "  getGlobalRegistryPath,\n")
+analyze = analyze.replace(
+    "// Note: --skills is handled after runFullAnalysis using the returned pipelineResult.",
+    "// Note: --skills is kept as a backward-compatible no-op. GitNexus skills are\n"
+    "  // installed globally by setup, not generated into each project.",
+)
 if "ignoreFilter?: { ignored:" not in analyze:
     analyze = replace_once(
         analyze,
@@ -262,7 +276,63 @@ if "ignoreFilter: options?.ignoreFilter" not in analyze:
         "        skipGit: options?.skipGit,\n        ignoreFilter: options?.ignoreFilter,\n",
         "src/cli/analyze.ts",
     )
+analyze = analyze.replace("        force: options?.force || options?.skills,\n", "        force: options?.force,\n")
+skill_block_marker = "    // Skill generation (CLI-only, uses pipeline result from analysis)\n    if (options?.skills && result.pipelineResult) {"
+if skill_block_marker in analyze:
+    start = analyze.index(skill_block_marker)
+    end_marker = "\n\n    const totalTime ="
+    end = analyze.index(end_marker, start)
+    analyze = (
+        analyze[:start]
+        + "    if (options?.skills) {\n"
+        + "      updateBar(99, 'Skipping project skill generation...');\n"
+        + "      barLog('  --skills is deprecated: GitNexus skills are installed globally by setup.');\n"
+        + "    }"
+        + analyze[end:]
+    )
 write("src/cli/analyze.ts", analyze)
+
+ai_context = read("src/cli/ai-context.ts")
+ai_context = ai_context.replace("import { fileURLToPath } from 'url';\n", "")
+ai_context = ai_context.replace(
+    "\n// ESM equivalent of __dirname\n"
+    "const __filename = fileURLToPath(import.meta.url);\n"
+    "const __dirname = path.dirname(__filename);\n",
+    "",
+)
+skills_table_start = ai_context.find("  const generatedRows =\n")
+if skills_table_start != -1:
+    skills_table_end = ai_context.find("\n\n  return `${GITNEXUS_START_MARKER}", skills_table_start)
+    if skills_table_end == -1:
+        raise SystemExit("Cannot patch ai-context.ts: skills table end marker not found")
+    ai_context = (
+        ai_context[:skills_table_start]
+        + "  void generatedSkills;\n\n"
+        + "  const skillsTable = `| Task | Use this global skill |\n"
+        + "|------|-----------------------|\n"
+        + "| Understand architecture / \"How does X work?\" | `gitnexus-exploring` |\n"
+        + "| Blast radius / \"What breaks if I change X?\" | `gitnexus-impact-analysis` |\n"
+        + "| Trace bugs / \"Why is X failing?\" | `gitnexus-debugging` |\n"
+        + "| Rename / extract / split / refactor | `gitnexus-refactoring` |\n"
+        + "| Tools, resources, schema reference | `gitnexus-guide` |\n"
+        + "| Index, status, clean, wiki CLI commands | `gitnexus-cli` |`;"
+        + ai_context[skills_table_end:]
+    )
+install_start = ai_context.find("/**\n * Install GitNexus skills to .claude/skills/gitnexus/")
+if install_start != -1:
+    install_end = ai_context.find("/**\n * Generate AI context files after indexing", install_start)
+    if install_end == -1:
+        raise SystemExit("Cannot patch ai-context.ts: installSkills end marker not found")
+    ai_context = ai_context[:install_start] + ai_context[install_end:]
+project_install_block = """  // Install skills to .claude/skills/gitnexus/
+  const installedSkills = await installSkills(repoPath);
+  if (installedSkills.length > 0) {
+    createdFiles.push(`.claude/skills/gitnexus/ (${installedSkills.length} skills)`);
+  }
+
+"""
+ai_context = ai_context.replace(project_install_block, "")
+write("src/cli/ai-context.ts", ai_context)
 PY
 
   ok "Unity custom files copied and command patch applied"

@@ -28,6 +28,7 @@ GITNEXUS_SKILLS_DIR="$GITNEXUS_CLI_DIR/skills"
 ANTIGRAVITY_SKILLS_DIR="$HOME/.gemini/antigravity/skills"
 CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
 CODEX_SKILLS_DIR="${CODEX_HOME:-$HOME/.codex}/skills"
+CUSTOM_SKILLS_DIR="$SCRIPT_DIR/custom/skills"
 UPSTREAM_REPO="https://github.com/abhigyanpatwari/GitNexus.git"
 
 # ── Prereqs ──────────────────────────────────────────────────
@@ -307,6 +308,32 @@ install_global_skills() {
   install_skills_to "$CODEX_SKILLS_DIR" "Codex"
 }
 
+# ── Apply custom skill overrides ─────────────────────────────
+apply_custom_skills() {
+  [ -d "$CUSTOM_SKILLS_DIR" ] || return 0
+
+  shopt -s nullglob
+  local skill_file skill_name installed=0
+  for skill_file in "$CUSTOM_SKILLS_DIR"/*.md; do
+    skill_name="$(basename "$skill_file" .md)"
+
+    # Override in upstream skills dir for future install_global_skills runs
+    mkdir -p "$GITNEXUS_SKILLS_DIR"
+    cp "$skill_file" "$GITNEXUS_SKILLS_DIR/$skill_name.md"
+
+    # Deploy directly to each agent's skills dir
+    for target in "$CLAUDE_SKILLS_DIR" "$ANTIGRAVITY_SKILLS_DIR" "$CODEX_SKILLS_DIR"; do
+      mkdir -p "$target/$skill_name"
+      cp "$skill_file" "$target/$skill_name/SKILL.md"
+    done
+
+    installed=$((installed + 1))
+  done
+  shopt -u nullglob
+
+  [ "$installed" -gt 0 ] && ok "Custom skills overlaid ($installed skills)"
+}
+
 # ── Fork/clone GitNexus for Web UI ────────────────────────────
 fork_web_ui() {
   step "Setting up GitNexus Web UI"
@@ -390,6 +417,7 @@ main() {
   configure_codex
   fork_web_ui
   install_global_skills
+  apply_custom_skills
   apply_gitnexus_customizations
   setup_cli_build
 

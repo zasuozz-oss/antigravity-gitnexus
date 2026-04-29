@@ -19,6 +19,10 @@ GITNEXUS_CLI_DIR="$GITNEXUS_DIR/gitnexus"
 GITNEXUS_SHARED_DIR="$GITNEXUS_DIR/gitnexus-shared"
 GITNEXUS_WEB_DIR="$GITNEXUS_DIR/gitnexus-web"
 CUSTOM_UNITY_DIR="$SCRIPT_DIR/custom/gitnexus-unity"
+CUSTOM_SKILLS_DIR="$SCRIPT_DIR/custom/skills"
+ANTIGRAVITY_SKILLS_DIR="$HOME/.gemini/antigravity/skills"
+CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
+CODEX_SKILLS_DIR="${CODEX_HOME:-$HOME/.codex}/skills"
 UPSTREAM_REPO="https://github.com/abhigyanpatwari/GitNexus.git"
 TMP_DIR=""
 
@@ -348,6 +352,31 @@ PY
   ok "Unity custom files copied and command patch applied"
 }
 
+apply_custom_skills() {
+  [ -d "$CUSTOM_SKILLS_DIR" ] || return 0
+
+  shopt -s nullglob
+  local skill_file skill_name installed=0
+  for skill_file in "$CUSTOM_SKILLS_DIR"/*.md; do
+    skill_name="$(basename "$skill_file" .md)"
+
+    # Override in upstream skills dir (picked up by install_global_skills in setup.sh)
+    mkdir -p "$GITNEXUS_SKILLS_DIR"
+    cp "$skill_file" "$GITNEXUS_SKILLS_DIR/$skill_name.md"
+
+    # Deploy directly to each agent's skills dir
+    for target in "$CLAUDE_SKILLS_DIR" "$ANTIGRAVITY_SKILLS_DIR" "$CODEX_SKILLS_DIR"; do
+      mkdir -p "$target/$skill_name"
+      cp "$skill_file" "$target/$skill_name/SKILL.md"
+    done
+
+    installed=$((installed + 1))
+  done
+  shopt -u nullglob
+
+  [ "$installed" -gt 0 ] && ok "Custom skills overlaid ($installed skills)"
+}
+
 install_dependencies() {
   step "Installing dependencies"
 
@@ -386,6 +415,7 @@ main() {
   if [ "${1:-}" = "--apply-custom-only" ]; then
     ensure_layout
     apply_unity_command_patch
+    apply_custom_skills
     return
   fi
 
@@ -395,6 +425,7 @@ main() {
   ensure_layout
   sync_upstream
   apply_unity_command_patch
+  apply_custom_skills
   install_dependencies
   build_and_link_cli
 

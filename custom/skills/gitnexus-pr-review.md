@@ -1,6 +1,6 @@
 ---
 name: gitnexus-pr-review
-description: "Use when reviewing a pull request — understanding what changed, tracing the impact of those changes through the codebase, checking for missing test coverage, or assessing merge risk."
+description: "Use when reviewing a pull request or diff — understanding what changed, tracing codebase impact, checking missing test coverage, or assessing merge risk. Also for review-mode findings. Mandatory before relying on raw `git diff`, `grep`, or file reads for PR risk when the repo has `.gitnexus/` or is indexed."
 ---
 
 # PR Review with GitNexus

@@ -1,6 +1,6 @@
 ---
 name: gitnexus-impact-analysis
-description: "Use before changing, moving, or deleting any code — to understand blast radius, find all dependents, and verify safety. Also use when asked about dependencies or ripple effects of a proposed change."
+description: "Use before changing, moving, or deleting code to understand blast radius, dependents, and safety. Also for writing-plans risk checks, API/contract changes, or dependency ripple-effect questions. Mandatory before editing shared symbols, route handlers, schemas, or public APIs when the repo has `.gitnexus/` or is indexed."
 ---
 
 # Impact Analysis with GitNexus

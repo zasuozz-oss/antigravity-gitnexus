@@ -1,6 +1,6 @@
 ---
 name: gitnexus-exploring
-description: "Use whenever understanding, reading, or navigating a codebase — any question about how code works, what a symbol does, where logic lives, how components connect, or what the architecture looks like. Prefer this over raw file reads when the repo is indexed."
+description: "Use whenever understanding, reading, or navigating a codebase — how code works, where logic lives, or architecture. Also during brainstorming project-context exploration or writing-plans file-structure assessment. Mandatory before `find`, `grep`, `rg`, raw file reads, or Explore subagents when the repo has `.gitnexus/` or is indexed."
 ---
 
 # Exploring Codebases with GitNexus

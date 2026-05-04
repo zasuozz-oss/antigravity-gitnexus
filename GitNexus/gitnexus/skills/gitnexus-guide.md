@@ -1,6 +1,6 @@
 ---
 name: gitnexus-guide
-description: "Use when asking about GitNexus itself — what tools are available, how the knowledge graph works, what MCP resources exist, how to query the graph schema, or which skill to use for a given task."
+description: "Use when asking about GitNexus itself — available tools, knowledge graph behavior, MCP resources, Cypher/schema queries, or which GitNexus skill to use. Also when deciding between GitNexus skills or writing trigger guidance for GitNexus workflows."
 ---
 
 # GitNexus Guide

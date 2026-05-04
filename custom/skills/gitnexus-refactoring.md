@@ -1,6 +1,6 @@
 ---
 name: gitnexus-refactoring
-description: "Use whenever restructuring code — renaming symbols, extracting modules, moving files, splitting classes, or any change that affects multiple call sites. Run impact analysis first, then plan the rename/move safely."
+description: "Use whenever restructuring code — renaming symbols, extracting modules, moving files, splitting classes, or changing multiple call sites. Also during writing-plans refactor decomposition. Mandatory before manual search/replace, `mv`, broad `rg`, or raw call-site scans when the repo has `.gitnexus/` or is indexed."
 ---
 
 # Refactoring with GitNexus

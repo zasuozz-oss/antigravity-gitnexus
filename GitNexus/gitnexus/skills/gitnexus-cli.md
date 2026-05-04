@@ -1,6 +1,6 @@
 ---
 name: gitnexus-cli
-description: "Use when running any GitNexus CLI operation — indexing or reindexing a repo, checking index status, clearing the index, generating a wiki, or listing what is currently indexed."
+description: "Use when running any GitNexus CLI operation — indexing, reindexing, checking status, clearing indexes, generating wiki/context files, or listing indexed repos. Also when `.gitnexus/` is missing or stale. Mandatory before shelling out to `gitnexus`, `npx gitnexus`, or analyze/reindex commands."
 ---
 
 # GitNexus CLI

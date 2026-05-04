@@ -1,6 +1,6 @@
 ---
 name: gitnexus-debugging
-description: "Use whenever investigating any bug, error, crash, test failure, or unexpected behavior — before reading files or grepping. Start here to trace the execution path leading to the problem."
+description: "Use whenever investigating any bug, error, crash, test failure, or unexpected behavior. Also during systematic-debugging root-cause tracing. Mandatory before reading files, `find`, `grep`, `rg`, or Explore subagents for a bug when the repo has `.gitnexus/` or is indexed."
 ---
 
 # Debugging with GitNexus
